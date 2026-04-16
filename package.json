@@ -1,11 +1,35 @@
 {
   "name": "hermes-desktop",
   "productName": "Hermes Desktop",
+  "description": "Windows-first Electron desktop application for operating a Hermes runtime hosted in WSL.",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
+  "homepage": "https://github.com/sunuai221-oss/Hermes-Desktop#readme",
+  "bugs": {
+    "url": "https://github.com/sunuai221-oss/Hermes-Desktop/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sunuai221-oss/Hermes-Desktop.git"
+  },
+  "keywords": [
+    "electron",
+    "react",
+    "vite",
+    "windows",
+    "wsl",
+    "hermes"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
+    "setup": "npm install && npm run install:server",
+    "install:server": "npm --prefix server install",
+    "check": "npm run lint && npm run build",
     "dev": "node server/index.mjs --dev",
     "dev:vite": "vite --port 3030",
     "server": "node server/index.mjs",

@@ -20,7 +20,7 @@ Hermes Desktop works best with a split workflow:
 2. run `npm run build` and `npm run lint`
 3. commit and push from WSL
 4. sync into a Windows mirror with `scripts/sync-to-windows.sh`
-5. on Windows, run `npm install` if the Electron binaries need to be refreshed
+5. on Windows, run `npm run setup` for a fresh clone, or `npm install` if the Electron binaries only need to be refreshed
 6. validate `start-hermes-desktop.bat`
 7. build a Windows package with `npm run desktop:build` when needed
 
@@ -38,3 +38,15 @@ Use filtered sync tools such as `rsync` rather than manual drag-and-drop copies.
 - do not edit the WSL and Windows trees independently
 - do not commit generated artifacts from the Windows mirror
 - do not assume native Linux desktop packaging is available yet
+
+## Compatibility naming
+
+The public product name is `Hermes Desktop`, but some internal compatibility names still use `builder`.
+
+Examples:
+
+- `hermes-builder.local.cmd` as a legacy override filename
+- `HERMES_BUILDER_*` environment variables
+- `.hermes-builder/` for compatibility state
+
+Keep these names where the code depends on them. Prefer `Hermes Desktop` in user-facing documentation.

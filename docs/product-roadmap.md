@@ -20,7 +20,7 @@ Hermes Desktop is moving toward a desktop-first operator experience built around
 
 ### 1. Better desktop polish
 
-- add polished README screenshots
+- keep README screenshots current when major UI changes land
 - publish the first Windows installer release
 - add release notes for each packaged build
 

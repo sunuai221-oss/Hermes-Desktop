@@ -6,6 +6,7 @@ The current repository baseline is green:
 
 - `npm run lint`: passes
 - `npm run build`: passes
+- CI validates the public repository on Node.js 22
 
 ## Public naming versus internal compatibility
 
@@ -19,6 +20,8 @@ Some internals still keep historical `builder` names:
 - fallback support for `hermes-builder.local.cmd`
 
 These are compatibility details, not product branding requirements.
+
+The repository documentation should prefer `Hermes Desktop` unless one of these legacy names must be referenced explicitly.
 
 ## Recommended repository model
 
@@ -50,6 +53,6 @@ The launcher should stay generic and:
 
 ## Recommended next steps
 
-- choose and add a license file
-- commit a clean screenshot for the README
 - add a first Windows installer release from `npm run desktop:build`
+- add release notes for packaged builds
+- modularize `server/index.mjs` over time without breaking compatibility contracts

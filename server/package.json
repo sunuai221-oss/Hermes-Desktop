@@ -3,6 +3,10 @@
   "version": "2.0.0",
   "type": "module",
   "description": "Local backend for Hermes Desktop",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "main": "index.mjs",
   "dependencies": {
     "axios": "^1.14.0",

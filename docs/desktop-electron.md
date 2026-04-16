@@ -12,9 +12,24 @@ Core files:
 - `electron/launch-dev.mjs`
 - `start-hermes-desktop.bat`
 - `start-hermes-desktop-dev.bat`
+- `start-builder.bat`
+- `start-builder-dev.bat`
 - `run-gateway-wsl.cmd`
 
-## Startup flow
+## Launcher guide
+
+Use these launchers according to the workflow you want:
+
+| Script | When to use it | Notes |
+| --- | --- | --- |
+| `start-hermes-desktop.bat` | Normal desktop use | Recommended default entrypoint. |
+| `start-hermes-desktop-dev.bat` | Electron development | Starts Electron in development mode. |
+| `start-builder.bat` | Optional browser mode | Runs the same local backend and opens the UI in a browser. |
+| `start-builder-dev.bat` | Browser development | Uses the browser workflow with dev middleware. |
+
+The browser launchers keep older `builder` naming for compatibility and continuity. They are optional and do not represent a separate product.
+
+## Desktop startup flow
 
 ### Standard desktop
 
@@ -35,6 +50,19 @@ Core files:
 3. ensures the Hermes gateway is reachable
 4. launches Electron in dev mode on port `3131` by default
 
+## Fresh clone setup
+
+For a new checkout on Windows, run:
+
+```powershell
+npm run setup
+```
+
+This installs both:
+
+- the root dependencies for the frontend and Electron shell
+- the backend dependencies under `server/`
+
 ## WSL configuration
 
 The launchers are intentionally generic. Machine-specific values belong in an ignored local file:
@@ -46,6 +74,8 @@ The launchers are intentionally generic. Machine-specific values belong in an ig
 Compatibility note:
 
 - older setups can keep using `hermes-builder.local.cmd`
+- some internal environment variables still use `HERMES_BUILDER_*`
+- the compatibility state folder remains `.hermes-builder/`
 
 Most useful variables:
 
@@ -75,6 +105,7 @@ Notes:
 - `asar` is disabled on purpose in this phase to keep backend startup simple
 - Windows packaging should be validated from the Windows mirror, not from the WSL canonical repo
 - Electron dependencies must be installed on Windows because `electron.exe` is platform-specific
+- the browser launchers are helpful for UI debugging, but Electron remains the primary user-facing mode
 
 ## Recommended repo model
 
@@ -82,5 +113,11 @@ For GitHub publication and ongoing maintenance:
 
 1. keep the git repository in WSL
 2. sync source into a Windows mirror with `scripts/sync-to-windows.sh`
-3. run `npm install` in Windows only for Electron packaging and launch validation
+3. run `npm run setup` in Windows for a fresh clone, or `npm install` when only the Windows Electron binary needs to be refreshed
 4. keep local override files untracked
+
+## Related docs
+
+- `README.md`
+- `docs/troubleshooting.md`
+- `docs/wsl-windows-workflow.md`
