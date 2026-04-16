@@ -9,6 +9,16 @@ It ships as one local product:
 - an Electron shell for the Windows desktop experience
 - a Windows/WSL bridge that starts or reconnects to the Hermes gateway
 
+## Screenshots
+
+### Chat
+
+![Hermes Desktop chat](docs/screenshots/chat.png)
+
+### Delegation
+
+![Hermes Desktop delegation](docs/screenshots/delegation.png)
+
 ## Does Electron depend on a separate web app?
 
 No.
@@ -190,7 +200,7 @@ From `package.json`:
 
 ## License
 
-No open-source license has been added yet.
+MIT. See `LICENSE`.
 
 ## Related docs
 
