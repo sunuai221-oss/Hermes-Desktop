@@ -3,102 +3,112 @@
 [![CI](https://github.com/sunuai221-oss/Hermes-Desktop/actions/workflows/ci.yml/badge.svg)](https://github.com/sunuai221-oss/Hermes-Desktop/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Hermes Desktop is a Windows-first Electron application for operating a Hermes runtime hosted in WSL. It combines a local React + Vite interface, a local Express backend, an Electron shell, and Windows/WSL launchers into one local operator workflow.
+Windows-first local desktop for operating a Hermes runtime hosted in WSL.
 
-## What It Does
+## What Is Hermes Desktop?
 
-- Starts or reconnects to a Hermes gateway running inside WSL.
-- Exposes the same local UI through Electron or, optionally, through a browser.
-- Reads and edits Hermes runtime files such as `config.yaml`, `SOUL.md`, memories, hooks, skills, and sessions.
-- Keeps Windows desktop packaging separate from the WSL runtime environment.
-- Preserves backward compatibility with older `builder` names where existing scripts or state still depend on them.
+- A local-first control surface for Hermes on Windows.
+- An Electron shell backed by a local Express service and a React UI served over `localhost`.
+- A one-click entrypoint for gateway status, sessions, memory, configuration, hooks, skills, and automations.
+- A desktop workflow that keeps the Hermes runtime in WSL while keeping Windows packaging and launchers local.
+- A public product named `Hermes Desktop`, with a small number of legacy `builder` names preserved only for compatibility.
+
+## Why This Exists
+
+Hermes Desktop gives Hermes a repeatable local operator workflow on Windows. Instead of relying on ad hoc browser tabs, manual port handling, and one-off WSL commands, it provides a stable desktop entrypoint that stays close to the local runtime.
 
 ## Screenshots
 
-### Chat Workspace
+### Chat Interface
 
-![Hermes Desktop chat workspace](docs/screenshots/chat.png)
+Main operator view for conversations, session continuity, model selection, and runtime-aware chat.
 
-### Delegation Workspace
+![Hermes Desktop chat interface](docs/screenshots/chat.png)
 
-![Hermes Desktop delegation workspace](docs/screenshots/delegation.png)
+### Delegation System
+
+Structured subagent task composer for delegation prompts, tool selection, and handoff into chat.
+
+![Hermes Desktop delegation system](docs/screenshots/delegation.png)
 
 ## Platform Support
 
 | Platform | Status | Notes |
 | --- | --- | --- |
 | Windows with WSL | Supported | Primary target and recommended setup. |
-| Windows without WSL | Not supported for normal use | The Hermes runtime is expected to run inside WSL. |
-| Native Linux desktop | Not packaged | The codebase is portable in parts, but launchers and packaging are Windows-first today. |
+| Windows without WSL | Not supported for normal use | Hermes is expected to run inside WSL. |
+| Native Linux desktop | Not packaged | Some code is portable, but launchers and packaging are Windows-first today. |
 
-## How It Works
+## Prerequisites
 
-At a high level, Hermes Desktop follows this flow:
-
-1. A Windows launcher loads optional local overrides and checks local dependencies.
-2. The launcher verifies that the Hermes gateway in WSL is reachable and starts it if needed.
-3. Electron starts or reuses the local backend on Windows.
-4. The backend serves the UI over `localhost` and manages Hermes runtime state and files.
-
-### Does Electron depend on a separate web app?
-
-No. Hermes Desktop runs as a single local application. The Electron shell starts or reconnects to the local backend, and that backend serves the UI over `localhost`. There is no separate hosted frontend to deploy.
-
-Some internal routes, environment variables, and local state folders still use historical `builder` names. Those names are kept for backward compatibility and should be treated as internal compatibility details rather than a separate product.
-
-## Installation
-
-### Prerequisites
-
-Before you launch the app, make sure you have:
+Required:
 
 - Windows with WSL enabled and a working Linux distribution.
 - A Hermes runtime and Hermes CLI available inside that WSL distribution.
 - Node.js 22 or newer on Windows.
 - `npm`, which ships with Node.js.
 
+Optional:
+
+- A canonical WSL worktree if you prefer to keep git history and day-to-day development on ext4.
+- Browser mode if you want to inspect the same local UI without Electron.
+
 If you develop from a canonical WSL worktree, use Node.js 22 or newer there as well.
 
-### Fresh Clone Setup
+## Quick Start
 
-From the repository root on Windows:
+Recommended path:
 
 ```powershell
 npm run setup
 Copy-Item hermes-desktop.local.cmd.example hermes-desktop.local.cmd
 ```
 
-Then update `hermes-desktop.local.cmd` for your machine.
+Then:
 
-`npm run setup` installs both the root dependencies and the backend dependencies under `server/`. This is the safest starting point for a fresh clone.
+1. update `hermes-desktop.local.cmd` only if your machine needs overrides
+2. keep that file untracked
+3. launch `start-hermes-desktop.bat`
 
-## Quick Start
+`start-hermes-desktop.bat` is the default entrypoint. It checks Windows dependencies, verifies the Hermes gateway in WSL, builds the UI bundle if needed, and launches Hermes Desktop in Electron.
 
-For normal use, run:
-
-```bat
-start-hermes-desktop.bat
-```
-
-What this launcher does:
-
-- checks for Windows Electron dependencies
-- verifies the Hermes gateway in WSL
-- builds the frontend bundle if needed
-- launches Hermes Desktop in Electron
-
-## Desktop Mode vs Optional Browser Mode
+## Launcher Modes
 
 Use the Electron launcher unless you explicitly want a browser-based workflow.
 
-| Use case | Script | Notes |
+| Workflow | Script | When to use it |
 | --- | --- | --- |
-| Standard desktop launch | `start-hermes-desktop.bat` | Recommended for normal use. |
+| Recommended desktop launch | `start-hermes-desktop.bat` | Default one-click entrypoint for normal use. |
 | Desktop development | `start-hermes-desktop-dev.bat` | Runs Electron in development mode. |
-| Optional browser launch | `start-builder.bat` | Starts the same local backend and opens the UI in a browser. Electron is not required. |
-| Browser development | `start-builder-dev.bat` | Starts the backend with Vite middleware and opens the browser UI. |
+| Optional browser mode | `start-builder.bat` | Starts the same local backend and opens the UI in a browser. |
+| Browser development | `start-builder-dev.bat` | Uses the browser workflow with dev middleware. |
 
-The `start-builder*.bat` scripts remain available because they are useful for browser-first debugging and older workflows. They are optional. The public product name is still Hermes Desktop.
+The `start-builder*.bat` launchers remain available for browser-first debugging and legacy-compatible workflows. They are optional and do not represent a separate product.
+
+## Runtime Model
+
+At a high level, Hermes Desktop follows this flow:
+
+1. a Windows launcher loads optional local overrides and checks local dependencies
+2. the launcher verifies that the Hermes gateway in WSL is reachable and starts it if needed
+3. Electron starts or reuses the local backend on Windows
+4. the backend serves the UI over `localhost` and manages Hermes runtime state and files
+
+### Does Electron depend on a hosted web app?
+
+No. Hermes Desktop does not require a deployed frontend or any hosted web service. The Electron shell starts or reconnects to the local backend, and that backend serves the same UI locally over HTTP.
+
+Historical `builder` names still exist in a small number of compatibility routes, environment variables, launcher fallbacks, and state paths. Those are implementation details kept for continuity. The public product name is `Hermes Desktop`.
+
+## Planned Improvements
+
+The current roadmap focuses on a small number of practical engineering upgrades:
+
+- split `server/index.mjs` into smaller route and service modules
+- add automated smoke tests and targeted unit tests
+- harden Windows packaging and release validation over time
+
+See `docs/product-roadmap.md` for the broader direction.
 
 ## Repository Layout
 
@@ -118,11 +128,11 @@ Do not edit committed launchers for machine-specific paths. Use a local override
 
 Preferred setup:
 
-1. Copy `hermes-desktop.local.cmd.example` to `hermes-desktop.local.cmd`
-2. Set only the values your machine needs
-3. Keep `hermes-desktop.local.cmd` untracked
+1. copy `hermes-desktop.local.cmd.example` to `hermes-desktop.local.cmd`
+2. set only the values your machine needs
+3. keep `hermes-desktop.local.cmd` untracked
 
-Useful variables:
+Most useful variables:
 
 - `HERMES_WSL_DISTRO`
 - `HERMES_CLI_PATH`
@@ -134,11 +144,12 @@ Useful variables:
 
 Compatibility note:
 
-- older setups may still use `hermes-builder.local.cmd`
+- `hermes-builder.local.cmd` remains supported as a legacy override filename
+- `hermes-builder.local.cmd.example` remains in the repository for older setups, but new setups should start from `hermes-desktop.local.cmd.example`
 - some internal environment variables still use `HERMES_BUILDER_*`
 - the local compatibility state directory remains `.hermes-builder/`
 
-These names are intentional compatibility bridges. New documentation and user-facing text prefer `Hermes Desktop`.
+These names are compatibility bridges, not public branding.
 
 ## Development Workflow
 
@@ -164,6 +175,12 @@ npm run build
 npm run check
 ```
 
+## Known Limitations
+
+- The supported desktop path is Windows with WSL. Native Linux packaging is not part of the current release flow.
+- Hermes Desktop depends on a working Hermes runtime and Hermes CLI inside the configured WSL distribution.
+- Windows packaging and installer flow are still evolving, even though the local desktop workflow is already usable.
+
 ## Troubleshooting
 
 Common issues on a fresh setup:
@@ -185,16 +202,7 @@ For more detail, see `docs/troubleshooting.md`.
 - `docs/wsl-windows-workflow.md`
 - `CONTRIBUTING.md`
 - `SECURITY.md`
-
-## Planned Improvements
-
-The current public roadmap focuses on a small number of high-value engineering improvements:
-
-- split `server/index.mjs` into smaller route and service modules
-- add automated smoke tests and targeted unit tests
-- review Windows packaging defaults, including `asar`, once packaging assumptions are covered by tests
-
-See `docs/product-roadmap.md` for the broader direction.
+- `CODE_OF_CONDUCT.md`
 
 ## License
 

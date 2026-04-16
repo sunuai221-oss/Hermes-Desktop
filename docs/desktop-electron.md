@@ -1,9 +1,9 @@
-# Hermes Desktop (Electron)
+# Hermes Desktop Runtime
 
 ## Purpose
 
-The Electron layer provides a Windows desktop shell around the local Hermes Desktop backend.
-It does not replace the backend. It boots or reuses the local server, then loads the UI through HTTP.
+Hermes Desktop uses Electron as a Windows desktop shell around the local backend.
+Electron does not replace the backend. It starts or reuses the local server, then loads the UI over HTTP on `localhost`.
 
 Core files:
 
@@ -27,7 +27,7 @@ Use these launchers according to the workflow you want:
 | `start-builder.bat` | Optional browser mode | Runs the same local backend and opens the UI in a browser. |
 | `start-builder-dev.bat` | Browser development | Uses the browser workflow with dev middleware. |
 
-The browser launchers keep older `builder` naming for compatibility and continuity. They are optional and do not represent a separate product.
+The browser launchers keep older `builder` naming for compatibility and continuity. They are optional and do not represent a separate product or a separate hosted web app.
 
 ## Desktop startup flow
 
@@ -63,6 +63,8 @@ This installs both:
 - the root dependencies for the frontend and Electron shell
 - the backend dependencies under `server/`
 
+For most users, the next step is to copy `hermes-desktop.local.cmd.example` to `hermes-desktop.local.cmd`, adjust it only if needed, and launch `start-hermes-desktop.bat`.
+
 ## WSL configuration
 
 The launchers are intentionally generic. Machine-specific values belong in an ignored local file:
@@ -74,6 +76,7 @@ The launchers are intentionally generic. Machine-specific values belong in an ig
 Compatibility note:
 
 - older setups can keep using `hermes-builder.local.cmd`
+- `hermes-builder.local.cmd.example` remains available for older local setups
 - some internal environment variables still use `HERMES_BUILDER_*`
 - the compatibility state folder remains `.hermes-builder/`
 
@@ -102,7 +105,7 @@ Available commands:
 
 Notes:
 
-- `asar` is disabled on purpose in this phase to keep backend startup simple
+- `asar` is currently disabled while packaged runtime path assumptions are still being verified
 - Windows packaging should be validated from the Windows mirror, not from the WSL canonical repo
 - Electron dependencies must be installed on Windows because `electron.exe` is platform-specific
 - the browser launchers are helpful for UI debugging, but Electron remains the primary user-facing mode

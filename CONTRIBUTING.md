@@ -24,6 +24,8 @@ Copy-Item hermes-desktop.local.cmd.example hermes-desktop.local.cmd
 
 Then adjust `hermes-desktop.local.cmd` for your machine.
 
+Use `hermes-desktop.local.cmd.example` for new setups. `hermes-builder.local.cmd.example` remains in the repository only for legacy-compatible local workflows.
+
 If you work from a canonical WSL repository and sync into Windows, reinstall Windows dependencies in the Windows mirror before testing Electron.
 
 ## Development Workflow

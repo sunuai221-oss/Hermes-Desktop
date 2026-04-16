@@ -18,6 +18,7 @@ Some internals still keep historical `builder` names:
 - the local state folder `.hermes-builder/`
 - a backward-compatible health route alias
 - fallback support for `hermes-builder.local.cmd`
+- the legacy local template `hermes-builder.local.cmd.example`
 
 These are compatibility details, not product branding requirements.
 
