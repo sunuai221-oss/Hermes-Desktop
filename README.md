@@ -186,6 +186,16 @@ For more detail, see `docs/troubleshooting.md`.
 - `CONTRIBUTING.md`
 - `SECURITY.md`
 
+## Planned Improvements
+
+The current public roadmap focuses on a small number of high-value engineering improvements:
+
+- split `server/index.mjs` into smaller route and service modules
+- add automated smoke tests and targeted unit tests
+- review Windows packaging defaults, including `asar`, once packaging assumptions are covered by tests
+
+See `docs/product-roadmap.md` for the broader direction.
+
 ## License
 
 MIT. See `LICENSE`.

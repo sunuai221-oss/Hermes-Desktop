@@ -29,6 +29,7 @@ Hermes Desktop is moving toward a desktop-first operator experience built around
 - improve diagnostics when the backend is online but the gateway is degraded
 - expose more actionable status details in the dashboard
 - add smoke tests for launch preconditions
+- add targeted tests for backend helpers and frontend utilities
 
 ### 3. Content management
 
@@ -41,3 +42,8 @@ Hermes Desktop is moving toward a desktop-first operator experience built around
 - split `server/index.mjs` into smaller modules
 - isolate runtime, file, session, and gateway responsibilities
 - make launcher logic easier to test
+
+### 5. Packaging confidence
+
+- verify packaged runtime path assumptions end to end
+- enable `asar` when packaging constraints are fully covered
