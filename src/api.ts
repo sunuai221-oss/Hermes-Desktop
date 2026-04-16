@@ -82,7 +82,7 @@ export const profiles = {
 export const gateway = {
   directBaseUrl: DIRECT_GATEWAY_BASE,
   directHealth: () => probeDirectGateway(),
-  backendHealth: () => http.get('/api/builder/health'),
+  backendHealth: () => http.get('/api/desktop/health'),
   health: () => http.get('/api/gateway/health'),
   state: () => http.get('/api/gateway/state'),
   processStatus: () => http.get<{ status: 'online' | 'offline'; port?: number | null; pid?: number; gateway_state?: 'starting' | 'running' | 'stopped'; managed?: boolean; status_source?: 'managed-profile' | 'shared-global' | 'offline'; home?: string; workspace_root?: string }>('/api/gateway/process-status'),

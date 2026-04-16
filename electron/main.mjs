@@ -9,9 +9,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const APP_ROOT = path.resolve(__dirname, '..');
 const APP_ICON = path.join(APP_ROOT, 'build', 'icons', 'icon-256.png');
-const BUILDER_PORT = Number(process.env.HERMES_BUILDER_PORT || process.env.PORT || 3020);
-const BUILDER_URL = `http://127.0.0.1:${BUILDER_PORT}`;
-const HEALTH_URL = `${BUILDER_URL}/api/builder/health`;
+const BACKEND_PORT = Number(process.env.HERMES_DESKTOP_BACKEND_PORT || process.env.HERMES_BUILDER_PORT || process.env.PORT || 3020);
+const APP_URL = `http://127.0.0.1:${BACKEND_PORT}`;
+const HEALTH_URL = `${APP_URL}/api/desktop/health`;
 const IS_DEV = process.env.HERMES_ELECTRON_DEV === '1';
 
 let mainWindow = null;
@@ -31,7 +31,7 @@ async function canAccess(targetPath) {
   }
 }
 
-async function isBuilderOnline() {
+async function isBackendOnline() {
   try {
     const response = await fetch(HEALTH_URL, { method: 'GET' });
     return response.ok;
@@ -40,10 +40,10 @@ async function isBuilderOnline() {
   }
 }
 
-async function waitForBuilder(timeoutMs = 30000) {
+async function waitForBackend(timeoutMs = 30000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
-    if (await isBuilderOnline()) return true;
+    if (await isBackendOnline()) return true;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   return false;
@@ -53,10 +53,10 @@ function resolveServerEntry() {
   return path.join(APP_ROOT, 'server', 'index.mjs');
 }
 
-async function spawnBuilderBackend() {
+async function spawnBackend() {
   const serverEntry = resolveServerEntry();
   if (!(await canAccess(serverEntry))) {
-    throw new Error(`Builder backend entry not found: ${serverEntry}`);
+    throw new Error(`Desktop backend entry not found: ${serverEntry}`);
   }
 
   const args = [serverEntry];
@@ -67,17 +67,18 @@ async function spawnBuilderBackend() {
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: '1',
-      HERMES_BUILDER_PORT: String(BUILDER_PORT),
-      PORT: String(BUILDER_PORT),
+      HERMES_DESKTOP_BACKEND_PORT: String(BACKEND_PORT),
+      HERMES_BUILDER_PORT: String(BACKEND_PORT),
+      PORT: String(BACKEND_PORT),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });
 
-  child.stdout.on('data', (chunk) => process.stdout.write(`[builder] ${chunk}`));
-  child.stderr.on('data', (chunk) => process.stderr.write(`[builder:err] ${chunk}`));
+  child.stdout.on('data', (chunk) => process.stdout.write(`[desktop-backend] ${chunk}`));
+  child.stderr.on('data', (chunk) => process.stderr.write(`[desktop-backend:err] ${chunk}`));
   child.on('exit', (code, signal) => {
-    log(`Builder backend exited (code=${code}, signal=${signal})`);
+    log(`Desktop backend exited (code=${code}, signal=${signal})`);
     if (backendProcess === child) {
       backendProcess = null;
       backendOwnedByElectron = false;
@@ -88,17 +89,17 @@ async function spawnBuilderBackend() {
   backendOwnedByElectron = true;
 }
 
-async function ensureBuilderBackend() {
-  if (await isBuilderOnline()) {
-    log(`Reusing existing builder backend on ${BUILDER_URL}`);
+async function ensureBackend() {
+  if (await isBackendOnline()) {
+    log(`Reusing existing backend on ${APP_URL}`);
     return;
   }
 
-  log(`Starting local builder backend on ${BUILDER_URL}`);
-  await spawnBuilderBackend();
-  const healthy = await waitForBuilder();
+  log(`Starting local backend on ${APP_URL}`);
+  await spawnBackend();
+  const healthy = await waitForBackend();
   if (!healthy) {
-    throw new Error(`Builder backend did not become healthy on ${HEALTH_URL}`);
+    throw new Error(`Desktop backend did not become healthy on ${HEALTH_URL}`);
   }
 }
 
@@ -107,14 +108,14 @@ function getBackgroundColor() {
 }
 
 async function createMainWindow() {
-  await ensureBuilderBackend();
+  await ensureBackend();
 
   mainWindow = new BrowserWindow({
     width: 1480,
     height: 940,
     minWidth: 1180,
     minHeight: 760,
-    title: 'Hermes',
+    title: 'Hermes Desktop',
     icon: APP_ICON,
     autoHideMenuBar: true,
     backgroundColor: getBackgroundColor(),
@@ -138,7 +139,7 @@ async function createMainWindow() {
     return { action: 'deny' };
   });
 
-  await mainWindow.loadURL(BUILDER_URL);
+  await mainWindow.loadURL(APP_URL);
 
   if (IS_DEV) {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
@@ -149,7 +150,7 @@ async function createMainWindow() {
   });
 }
 
-async function shutdownBuilderBackend() {
+async function shutdownBackend() {
   if (!backendOwnedByElectron || !backendProcess) return;
   const proc = backendProcess;
   backendProcess = null;
@@ -198,12 +199,12 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', async () => {
-  await shutdownBuilderBackend();
+  await shutdownBackend();
   if (process.platform !== 'darwin') {
     app.quit();
   }
 });
 
 app.on('before-quit', async () => {
-  await shutdownBuilderBackend();
+  await shutdownBackend();
 });

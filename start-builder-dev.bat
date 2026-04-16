@@ -1,22 +1,26 @@
 @echo off
 setlocal
-title Hermes AI Builder - Dev 3020
+title Hermes Desktop - Browser Dev
 color 05
 echo ============================================
-echo   Hermes AI Builder : Dev Mode
+echo   Hermes Desktop : Browser Dev
 echo ============================================
 echo.
 
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
-if exist "%ROOT%\hermes-builder.local.cmd" call "%ROOT%\hermes-builder.local.cmd"
+if exist "%ROOT%\hermes-desktop.local.cmd" (
+  call "%ROOT%\hermes-desktop.local.cmd"
+) else if exist "%ROOT%\hermes-builder.local.cmd" (
+  call "%ROOT%\hermes-builder.local.cmd"
+)
 if not defined HERMES_GATEWAY_PORT set "HERMES_GATEWAY_PORT=8642"
 set "GATEWAY_HEALTH_URL=http://127.0.0.1:%HERMES_GATEWAY_PORT%/health"
-set "BUILDER_HEALTH_URL=http://127.0.0.1:3020/api/builder/health"
+set "DESKTOP_HEALTH_URL=http://127.0.0.1:3020/api/desktop/health"
 
 echo [0/4] Cleaning old dev windows...
-taskkill /F /FI "WINDOWTITLE eq Builder Backend Dev*" >nul 2>&1
-taskkill /F /FI "WINDOWTITLE eq Builder Backend*" >nul 2>&1
+taskkill /F /FI "WINDOWTITLE eq Desktop Backend Dev*" >nul 2>&1
+taskkill /F /FI "WINDOWTITLE eq Desktop Backend*" >nul 2>&1
 
 echo [1/4] Starting Hermes Gateway (WSL2)...
 call :check_url "%GATEWAY_HEALTH_URL%"
@@ -28,17 +32,17 @@ if errorlevel 1 (
   echo      Gateway already online.
 )
 
-echo [2/4] Starting Builder Backend + dev UI on 3020...
-call :check_url "%BUILDER_HEALTH_URL%"
+echo [2/4] Starting local backend + dev UI on 3020...
+call :check_url "%DESKTOP_HEALTH_URL%"
 if errorlevel 1 (
-  start "Builder Backend Dev" cmd /k call "%ROOT%\run-builder-backend.cmd" --dev
-  call :wait_for_url "%BUILDER_HEALTH_URL%" 30
+  start "Desktop Backend Dev" cmd /k call "%ROOT%\run-builder-backend.cmd" --dev
+  call :wait_for_url "%DESKTOP_HEALTH_URL%" 30
   if errorlevel 1 goto :error_backend
 ) else (
   echo      Backend already online.
 )
 
-echo [3/4] Opening Builder dev...
+echo [3/4] Opening Hermes Desktop browser dev mode...
 start "" "http://localhost:3020"
 
 echo.
@@ -67,6 +71,6 @@ exit /b 1
 
 :error_backend
 echo.
-echo [ERROR] Builder dev backend is not responding at %BUILDER_HEALTH_URL%.
+echo [ERROR] Desktop dev backend is not responding at %DESKTOP_HEALTH_URL%.
 pause
 exit /b 1

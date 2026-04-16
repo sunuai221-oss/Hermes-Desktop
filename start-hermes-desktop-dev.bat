@@ -9,12 +9,16 @@ echo.
 
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
-if exist "%ROOT%\hermes-builder.local.cmd" call "%ROOT%\hermes-builder.local.cmd"
+if exist "%ROOT%\hermes-desktop.local.cmd" (
+  call "%ROOT%\hermes-desktop.local.cmd"
+) else if exist "%ROOT%\hermes-builder.local.cmd" (
+  call "%ROOT%\hermes-builder.local.cmd"
+)
 if not defined HERMES_GATEWAY_PORT set "HERMES_GATEWAY_PORT=8642"
 if not defined HERMES_DESKTOP_DEV_PORT set "HERMES_DESKTOP_DEV_PORT=3131"
 set "GATEWAY_HEALTH_URL=http://127.0.0.1:%HERMES_GATEWAY_PORT%/health"
 set "DESKTOP_PORT=%HERMES_DESKTOP_DEV_PORT%"
-set "BUILDER_HEALTH_URL=http://127.0.0.1:%DESKTOP_PORT%/api/builder/health"
+set "DESKTOP_HEALTH_URL=http://127.0.0.1:%DESKTOP_PORT%/api/desktop/health"
 set "ELECTRON_CMD=%ROOT%\node_modules\.bin\electron.cmd"
 set "ELECTRON_EXE=%ROOT%\node_modules\electron\dist\electron.exe"
 set "ELECTRON_LINUX=%ROOT%\node_modules\electron\dist\electron"
@@ -36,6 +40,7 @@ if errorlevel 1 (
 
 echo [2/4] Launching Hermes Desktop Dev on port %DESKTOP_PORT%...
 pushd "%ROOT%"
+set "HERMES_DESKTOP_BACKEND_PORT=%DESKTOP_PORT%"
 set "HERMES_BUILDER_PORT=%DESKTOP_PORT%"
 set "PORT=%DESKTOP_PORT%"
 call npm.cmd run desktop:dev
@@ -44,7 +49,7 @@ popd
 
 echo.
 echo [3/4] Hermes Desktop Dev closed. Code=%EXIT_CODE%
-echo [4/4] Expected health URL: %BUILDER_HEALTH_URL%
+echo [4/4] Expected health URL: %DESKTOP_HEALTH_URL%
 pause
 endlocal
 exit /b %EXIT_CODE%

@@ -1,23 +1,28 @@
 @echo off
 setlocal
-title Hermes AI Builder - Runtime 3020
+title Hermes Desktop - Browser Mode
 color 05
 echo ============================================
-echo   Hermes AI Builder : Standard Runtime
+echo   Hermes Desktop : Browser Mode
 echo ============================================
 echo.
 
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
-if exist "%ROOT%\hermes-builder.local.cmd" call "%ROOT%\hermes-builder.local.cmd"
+if exist "%ROOT%\hermes-desktop.local.cmd" (
+  call "%ROOT%\hermes-desktop.local.cmd"
+) else if exist "%ROOT%\hermes-builder.local.cmd" (
+  call "%ROOT%\hermes-builder.local.cmd"
+)
 if not defined HERMES_GATEWAY_PORT set "HERMES_GATEWAY_PORT=8642"
 set "GATEWAY_HEALTH_URL=http://127.0.0.1:%HERMES_GATEWAY_PORT%/health"
-set "BUILDER_HEALTH_URL=http://127.0.0.1:3020/api/builder/health"
+set "DESKTOP_HEALTH_URL=http://127.0.0.1:3020/api/desktop/health"
 
 :: 1. Clean dev mode only
 echo [0/5] Cleaning dev windows...
 taskkill /F /FI "WINDOWTITLE eq Builder UI*" >nul 2>&1
-taskkill /F /FI "WINDOWTITLE eq Builder Backend Dev*" >nul 2>&1
+taskkill /F /FI "WINDOWTITLE eq Hermes Desktop UI*" >nul 2>&1
+taskkill /F /FI "WINDOWTITLE eq Desktop Backend Dev*" >nul 2>&1
 
 :: 2. Hermes Gateway
 echo [1/5] Checking Hermes Gateway...
@@ -38,20 +43,20 @@ call npm.cmd run build
 if errorlevel 1 goto :error_build
 popd
 
-:: 4. Builder Backend
-echo [3/5] Checking Builder Backend...
-call :check_url "%BUILDER_HEALTH_URL%"
+:: 4. Local backend
+echo [3/5] Checking local backend...
+call :check_url "%DESKTOP_HEALTH_URL%"
 if errorlevel 1 (
   echo      Backend offline, starting on 3020...
-  start "Builder Backend" cmd /k call "%ROOT%\run-builder-backend.cmd"
-  call :wait_for_url "%BUILDER_HEALTH_URL%" 30 "Builder Backend"
+  start "Desktop Backend" cmd /k call "%ROOT%\run-builder-backend.cmd"
+  call :wait_for_url "%DESKTOP_HEALTH_URL%" 30 "Desktop Backend"
   if errorlevel 1 goto :error_backend
 ) else (
   echo      Backend already online.
 )
 
 :: 5. Open browser
-echo [4/5] Opening Builder...
+echo [4/5] Opening Hermes Desktop in the browser...
 start "" "http://localhost:3020"
 
 echo.
@@ -87,6 +92,6 @@ exit /b 1
 
 :error_backend
 echo.
-echo [ERROR] Builder backend is not responding at %BUILDER_HEALTH_URL%.
+echo [ERROR] Local backend is not responding at %DESKTOP_HEALTH_URL%.
 pause
 exit /b 1

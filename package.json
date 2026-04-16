@@ -1,8 +1,8 @@
 {
-  "name": "hermes-builder",
-  "productName": "Hermes",
+  "name": "hermes-desktop",
+  "productName": "Hermes Desktop",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
@@ -48,7 +48,7 @@
   },
   "build": {
     "appId": "local.hermes.desktop",
-    "productName": "Hermes",
+    "productName": "Hermes Desktop",
     "icon": "build/icons/hermes.ico",
     "asar": false,
     "directories": {
@@ -65,7 +65,7 @@
       "target": [
         "nsis"
       ],
-      "artifactName": "Hermes-${version}-${arch}.${ext}"
+      "artifactName": "Hermes-Desktop-${version}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,

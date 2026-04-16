@@ -53,12 +53,12 @@ export function DashboardPage() {
   const runtimeAlerts = [
     !backendAvailable
       ? (directGatewayReachable
-        ? `The Builder backend is not responding, but the gateway responds directly on ${apiEndpoint}.`
-        : 'The Builder backend is not responding.')
+        ? `The desktop backend is not responding, but the gateway responds directly on ${apiEndpoint}.`
+        : 'The desktop backend is not responding.')
       : null,
     backendAvailable && !gatewayReachable
       ? (directGatewayReachable
-        ? `The Builder proxy is failing, but the gateway responds directly on ${apiEndpoint}.`
+        ? `The desktop backend proxy is failing, but the gateway responds directly on ${apiEndpoint}.`
         : `The Hermes gateway is not responding on ${apiEndpoint}.`)
       : null,
     fatal.length > 0 ? `${fatal.length} platform(s) are in a fatal state.` : null,
@@ -83,7 +83,7 @@ export function DashboardPage() {
       <div className="grid grid-cols-2 gap-4 xl:grid-cols-5">
         <StatCard
           icon={<Server size={18} />}
-          label="Builder"
+          label="Backend"
           value={backendAvailable ? 'online' : 'offline'}
           detail={<StatusBadge status={builderStatus} size="sm" />}
         />

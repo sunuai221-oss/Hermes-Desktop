@@ -495,7 +495,7 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
     let sessionId = activeSessionId;
     if (!sessionId) {
       try {
-        const created = await apiClient.sessions.create({ source: 'api-server', title: 'builder chat session', model: effectiveModel });
+        const created = await apiClient.sessions.create({ source: 'api-server', title: 'Hermes Desktop chat session', model: effectiveModel });
         sessionId = created.data?.id || null;
         if (sessionId) setActiveSessionId(sessionId);
       } catch { sessionId = null; }

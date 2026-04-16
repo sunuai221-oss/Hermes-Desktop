@@ -18,6 +18,7 @@ coverage/
 *.tsbuildinfo
 .eslintcache
 hermes-builder.local.cmd
+hermes-desktop.local.cmd
 .env
 .env.*
 !.env.example

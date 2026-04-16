@@ -1,18 +1,26 @@
-# Hermes Builder
+# Hermes Desktop
 
-Hermes Builder is the local control plane for a Hermes runtime.
-It combines:
+Hermes Desktop is a Windows-first Electron application for operating a Hermes runtime hosted in WSL.
 
-- a React + Vite frontend
-- an Express backend that edits Hermes runtime files
-- an Electron shell for a Windows desktop experience
-- a Windows/WSL bridge so the UI can manage a Hermes runtime hosted inside WSL
+It ships as one local product:
 
-The project is designed for a split runtime model:
+- a React + Vite interface
+- an Express backend that reads and edits Hermes runtime files
+- an Electron shell for the Windows desktop experience
+- a Windows/WSL bridge that starts or reconnects to the Hermes gateway
 
-- source code can live in WSL as the canonical worktree
-- Electron packaging and one-click launch can run from a Windows mirror
-- the Hermes gateway itself can run inside WSL
+## Does Electron depend on a separate web app?
+
+No.
+
+Electron does not require a hosted web app or a separate deployed frontend. It starts or reuses the local backend, and that backend serves the same UI locally over HTTP.
+
+Some internal routes, environment variables, and state folders still use historical `builder` names for compatibility, but those are implementation details. The public product name is `Hermes Desktop`.
+
+## Platform support
+
+- Supported today: Windows with WSL
+- Not packaged today: native Linux desktop builds
 
 ## Architecture
 
@@ -34,12 +42,12 @@ The project is designed for a split runtime model:
 ### Desktop shell
 
 - Electron
-- `electron/main.mjs` starts or reuses the local Builder backend
-- the Electron window loads the Builder UI through the local HTTP server
+- `electron/main.mjs` starts or reuses the local backend
+- the Electron window loads the local UI through the backend HTTP server
 
 ## Runtime model
 
-Hermes Builder is not a static frontend. The backend is the orchestration layer.
+Hermes Desktop is not just a static frontend. The local backend is the orchestration layer.
 
 It is responsible for:
 
@@ -48,12 +56,12 @@ It is responsible for:
 - reading and writing `config.yaml`, `SOUL.md`, memories, hooks, skills, sessions, and cron jobs
 - probing gateway health
 - starting gateway processes inside WSL when needed
-- storing Builder-local state under `.hermes-builder/`
+- storing local desktop state under `.hermes-builder/` for backward compatibility
 
 Typical ports:
 
 - Hermes Gateway: `8642`
-- Hermes Builder backend: `3020`
+- Local backend: `3020`
 - Electron desktop wrapper: `3130`
 - Electron desktop dev wrapper: `3131`
 
@@ -63,27 +71,13 @@ Typical ports:
 - `server/index.mjs`: backend API and runtime orchestration
 - `electron/`: Electron entrypoints
 - `public/`: static assets
-- `docs/`: architecture, desktop, and release notes
+- `docs/`: operator and repository documentation
 - `scripts/sync-to-windows.sh`: one-way sync from a WSL canonical repo to a Windows mirror
-- `start-*.bat`: Windows one-click launchers
+- `start-*.bat`: Windows launchers
 
 ## Quick start
 
-### Web runtime
-
-Standard runtime:
-
-```bat
-start-builder.bat
-```
-
-Development mode:
-
-```bat
-start-builder-dev.bat
-```
-
-### Electron desktop
+### Desktop mode
 
 Standard desktop mode:
 
@@ -97,22 +91,42 @@ Development desktop mode:
 start-hermes-desktop-dev.bat
 ```
 
-The Electron launchers:
+The desktop launchers:
 
 - verify Windows-side Electron dependencies
-- ensure the WSL Hermes gateway is reachable
+- ensure the Hermes gateway is reachable
 - build the frontend bundle if `dist/` is missing
-- launch Electron on a dedicated desktop port
+- launch Electron on the configured local backend port
+
+### Optional browser mode
+
+If you want to run the same local UI in a browser without Electron:
+
+```bat
+start-builder.bat
+```
+
+Development browser mode:
+
+```bat
+start-builder-dev.bat
+```
+
+These browser launchers are optional. Electron does not depend on them.
 
 ## Local machine overrides
 
-Do not edit the committed launchers for machine-specific paths.
+Do not edit committed launchers for machine-specific paths.
 
-Instead:
+Preferred setup:
 
-1. Copy `hermes-builder.local.cmd.example` to `hermes-builder.local.cmd`
+1. Copy `hermes-desktop.local.cmd.example` to `hermes-desktop.local.cmd`
 2. Adjust the values for your machine
-3. Keep `hermes-builder.local.cmd` untracked
+3. Keep `hermes-desktop.local.cmd` untracked
+
+Compatibility note:
+
+- the launchers also fall back to `hermes-builder.local.cmd` for older setups
 
 Useful variables:
 
@@ -127,7 +141,7 @@ Useful variables:
 Recommended split:
 
 - `HERMES_WSL_HOME`: Linux path used by WSL-side gateway commands
-- `HERMES_HOME`: Windows/UNC path used by the Builder backend
+- `HERMES_HOME`: Windows or UNC path used by the local backend
 
 Example:
 
@@ -138,15 +152,15 @@ set "HERMES_WSL_HOME=/home/your-user/.hermes"
 set "HERMES_HOME=\\wsl.localhost\Ubuntu\home\your-user\.hermes"
 ```
 
-## GitHub strategy
+## Development workflow
 
-The cleanest publication model is:
+The cleanest long-term model is:
 
-1. Keep the canonical git repository in WSL on ext4
-2. Commit and push from WSL
-3. Sync to a Windows mirror only when you need Windows-native Electron packaging or one-click launch validation
+1. keep the canonical git repository in WSL on ext4
+2. commit and push from WSL
+3. sync to a Windows mirror only when you need Electron packaging or one-click launch validation
 
-Why this is the safest model:
+Why this works best:
 
 - Linux and Windows `node_modules` stay separated
 - Electron Windows binaries are installed only in the Windows mirror
@@ -160,7 +174,7 @@ Use `scripts/sync-to-windows.sh` from the WSL repo to refresh the Windows mirror
 From `package.json`:
 
 - `npm run dev`: backend + Vite middleware on `3020`
-- `npm run dev:vite`: legacy Vite-only UI on `3030`
+- `npm run dev:vite`: browser-only UI on `3030`
 - `npm run build`: TypeScript build + Vite production build
 - `npm run lint`: ESLint
 - `npm run desktop`: Electron against bundled UI
@@ -168,18 +182,19 @@ From `package.json`:
 - `npm run desktop:pack`: unpacked Electron package in `release/`
 - `npm run desktop:build`: Windows NSIS installer in `release/`
 
-## Publishing rules
+## Repository hygiene
 
-Before the first GitHub push:
+- do not commit `node_modules/`, `dist/`, `release/`, `.env`, `hermes-desktop.local.cmd`, or `hermes-builder.local.cmd`
+- keep launchers generic and environment-driven
+- keep docs and examples free of personal usernames or machine paths
 
-- initialize git in the canonical WSL worktree
-- verify `.gitignore` and `.gitattributes`
-- do not commit `node_modules/`, `dist/`, `release/`, `.env`, or `hermes-builder.local.cmd`
-- keep Windows launchers generic and environment-driven
-- keep README examples generic, not tied to one username or one machine path
+## License
+
+No open-source license has been added yet.
 
 ## Related docs
 
 - `docs/desktop-electron.md`
-- `docs/github-readiness-audit.md`
-- `docs/plans/2026-04-12-wsl-source-of-truth-migration.md`
+- `docs/repository-notes.md`
+- `docs/product-roadmap.md`
+- `docs/wsl-windows-workflow.md`

@@ -102,7 +102,7 @@ export function ConfigPage() {
         const platforms = gateway.state ? Object.entries(gateway.state.platforms) : [];
         const fatal = platforms.filter(([, p]) => p.state === 'fatal');
         const alerts: string[] = [];
-        if (gateway.builderStatus !== 'online') alerts.push('Builder backend offline');
+        if (gateway.builderStatus !== 'online') alerts.push('Desktop backend offline');
         if (gateway.health !== 'online' && gateway.health !== 'direct') alerts.push('Gateway unreachable');
         if (fatal.length > 0) alerts.push(`${fatal.length} platform(s) in fatal state`);
 

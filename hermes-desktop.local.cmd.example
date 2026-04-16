@@ -1,6 +1,5 @@
 @echo off
-REM Compatibility example for older setups.
-REM New setups should copy hermes-desktop.local.cmd.example to hermes-desktop.local.cmd instead.
+REM Copy this file to hermes-desktop.local.cmd and adapt it to your machine.
 REM Leave values unset if auto-detection is enough.
 
 REM WSL distro used by the launchers and the backend.

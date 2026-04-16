@@ -2,8 +2,8 @@
 
 ## Purpose
 
-The Electron layer provides a Windows desktop shell around the Hermes Builder backend.
-It does not replace the backend. It boots or reuses the local Builder server, then loads the UI through HTTP.
+The Electron layer provides a Windows desktop shell around the local Hermes Desktop backend.
+It does not replace the backend. It boots or reuses the local server, then loads the UI through HTTP.
 
 Core files:
 
@@ -20,7 +20,7 @@ Core files:
 
 `start-hermes-desktop.bat` does the following:
 
-1. loads optional local overrides from `hermes-builder.local.cmd`
+1. loads optional local overrides from `hermes-desktop.local.cmd`
 2. verifies the Windows Electron binary exists
 3. starts the Hermes gateway in WSL if it is not already healthy
 4. builds `dist/` if the frontend bundle is missing
@@ -39,9 +39,13 @@ Core files:
 
 The launchers are intentionally generic. Machine-specific values belong in an ignored local file:
 
-- copy `hermes-builder.local.cmd.example`
-- rename it to `hermes-builder.local.cmd`
+- copy `hermes-desktop.local.cmd.example`
+- rename it to `hermes-desktop.local.cmd`
 - set only the variables you need
+
+Compatibility note:
+
+- older setups can keep using `hermes-builder.local.cmd`
 
 Most useful variables:
 
@@ -79,4 +83,4 @@ For GitHub publication and ongoing maintenance:
 1. keep the git repository in WSL
 2. sync source into a Windows mirror with `scripts/sync-to-windows.sh`
 3. run `npm install` in Windows only for Electron packaging and launch validation
-4. keep `hermes-builder.local.cmd` untracked
+4. keep local override files untracked

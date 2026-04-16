@@ -2,7 +2,11 @@
 setlocal
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
-if exist "%ROOT%\hermes-builder.local.cmd" call "%ROOT%\hermes-builder.local.cmd"
+if exist "%ROOT%\hermes-desktop.local.cmd" (
+  call "%ROOT%\hermes-desktop.local.cmd"
+) else if exist "%ROOT%\hermes-builder.local.cmd" (
+  call "%ROOT%\hermes-builder.local.cmd"
+)
 
 if not defined HERMES_WSL_DISTRO set "HERMES_WSL_DISTRO=Ubuntu"
 if not defined HERMES_GATEWAY_PORT set "HERMES_GATEWAY_PORT=8642"

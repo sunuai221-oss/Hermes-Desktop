@@ -15,7 +15,7 @@ import { fileURLToPath } from 'url';
 import { DatabaseSync } from 'node:sqlite';
 
 const app = express();
-const port = Number(process.env.HERMES_BUILDER_PORT || process.env.PORT || 3020);
+const port = Number(process.env.HERMES_DESKTOP_BACKEND_PORT || process.env.HERMES_BUILDER_PORT || process.env.PORT || 3020);
 const SERVER_FILE = fileURLToPath(import.meta.url);
 const SERVER_DIR = path.dirname(SERVER_FILE);
 const BUILDER_ROOT = path.resolve(SERVER_DIR, '..');
@@ -867,7 +867,7 @@ async function hermesContextMiddleware(req, res, next) {
   } catch (error) {
     console.error('[hermesContextMiddleware] Failed to initialize Hermes context:', error);
     res.status(503).json({
-      error: 'Hermes builder state is temporarily unavailable',
+      error: 'Hermes Desktop state is temporarily unavailable',
       details: error.message,
     });
   }
@@ -979,10 +979,10 @@ app.delete('/api/profiles/:name', async (req, res) => {
   }
 });
 
-app.get('/api/builder/health', async (req, res) => {
+async function sendDesktopHealth(_req, res) {
   res.json({
     status: 'ok',
-    service: 'hermes-builder-backend',
+    service: 'hermes-desktop-backend',
     port,
     pid: process.pid,
     frontend: {
@@ -993,7 +993,10 @@ app.get('/api/builder/health', async (req, res) => {
       entrypoint: '/',
     },
   });
-});
+}
+
+app.get('/api/desktop/health', sendDesktopHealth);
+app.get('/api/builder/health', sendDesktopHealth);
 
 app.use('/api/voice/audio', apiAuthMiddleware, hermesContextMiddleware, (req, res, next) => {
   express.static(req.hermes.paths.voice)(req, res, next);
@@ -3209,7 +3212,7 @@ async function installFrontend() {
 
   app.get('/', (_req, res) => {
     res.status(503).type('text/plain').send(
-      'Hermes Builder frontend bundle is missing. Run "npm run build" in hermes-builder before opening http://localhost:3020.'
+      'Hermes Desktop frontend bundle is missing. Run "npm run build" in the repository root before opening http://localhost:3020.'
     );
   });
 }

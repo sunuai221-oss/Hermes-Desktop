@@ -25,7 +25,7 @@ const sections = [
     title: 'Agent presets',
     icon: <BookOpen size={16} className="text-primary" />,
     points: [
-      'The Builder agent library is a layer of reusable presets.',
+      'The Hermes preset library is a layer of reusable presets.',
       'A preset can apply `SOUL.md`, the default model, and the target personality.',
       'This is not a native multi-agent runtime system.',
     ],
@@ -82,7 +82,7 @@ export function DocsPage() {
     >
       <div>
         <h2 className="text-3xl font-semibold">
-          Builder <span className="text-primary">Docs</span>
+          Hermes <span className="text-primary">Docs</span>
         </h2>
       </div>
 

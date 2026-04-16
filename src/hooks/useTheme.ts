@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 
 export type Theme = 'light' | 'dark' | 'system';
 
-const STORAGE_KEY = 'hermes-builder-theme';
+const STORAGE_KEY = 'hermes-desktop-theme';
+const LEGACY_STORAGE_KEY = 'hermes-builder-theme';
 
 function getSystemPreference(): 'light' | 'dark' {
   if (typeof window === 'undefined') return 'light';
@@ -16,7 +17,7 @@ function applyTheme(theme: Theme) {
 
 export function useTheme() {
   const [theme, setThemeState] = useState<Theme>(() => {
-    const stored = localStorage.getItem(STORAGE_KEY) as Theme | null;
+    const stored = (localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY)) as Theme | null;
     return stored || 'system';
   });
 
