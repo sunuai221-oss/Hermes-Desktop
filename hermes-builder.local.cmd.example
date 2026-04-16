@@ -1,0 +1,21 @@
+@echo off
+REM Copy this file to hermes-builder.local.cmd and adapt it to your machine.
+REM Leave values unset if auto-detection is enough.
+
+REM WSL distro used by the launchers and the backend.
+set "HERMES_WSL_DISTRO=Ubuntu"
+
+REM Optional explicit Hermes CLI location inside WSL.
+set "HERMES_CLI_PATH=/home/your-user/.local/bin/hermes"
+
+REM Optional explicit Hermes runtime home inside WSL for gateway commands.
+set "HERMES_WSL_HOME=/home/your-user/.hermes"
+
+REM Optional explicit Hermes runtime home for the Windows-side backend.
+REM Keep the UNC path aligned with HERMES_WSL_DISTRO.
+set "HERMES_HOME=\\wsl.localhost\Ubuntu\home\your-user\.hermes"
+
+REM Optional port overrides.
+set "HERMES_GATEWAY_PORT=8642"
+set "HERMES_DESKTOP_PORT=3130"
+set "HERMES_DESKTOP_DEV_PORT=3131"

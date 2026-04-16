@@ -1,0 +1,19 @@
+<svg width="260" height="80" viewBox="0 0 260 80" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FFD700"/>
+      <stop offset="100%" stop-color="#FF8C00"/>
+    </linearGradient>
+  </defs>
+
+  <style>
+    .title {
+      font-family: 'Cinzel', 'Trajan Pro', serif;
+      font-size: 42px;
+      fill: url(#gold);
+      letter-spacing: 4px;
+    }
+  </style>
+
+  <text x="10" y="55" class="title">ἙΡΜΗΣ</text>
+</svg>

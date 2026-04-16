@@ -1,0 +1,130 @@
+@import "tailwindcss";
+
+@layer theme {
+  :root {
+    /* Hermes brand palette from the wordmark and hero image */
+    --brand-gold: 51 100% 50%;   /* #FFD700 */
+    --brand-amber: 33 100% 50%;  /* #FF8C00 */
+    --brand-ember: 18 50% 47%;   /* #B4603C */
+    --brand-smoke: 20 60% 24%;   /* #603018 */
+    --brand-ivory: 30 80% 94%;   /* #FCF0E4 */
+
+    --background: 30 80% 94%;    /* #FCF0E4 */
+    --foreground: 22 40% 12%;    /* #2A1B12 */
+    --card: 32 100% 97%;         /* #FFF9F2 */
+    --card-foreground: 22 40% 12%;
+    --popover: 32 100% 97%;
+    --popover-foreground: 22 40% 12%;
+    --primary: 27 69% 45%;       /* #C46C24 */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 35 56% 88%;     /* #F2E4D1 */
+    --secondary-foreground: 22 40% 12%;
+    --muted: 33 46% 88%;         /* #EFE3D4 */
+    --muted-foreground: 26 21% 40%; /* #7A6250 */
+    --accent: 41 79% 87%;        /* #F8E7C3 */
+    --accent-foreground: 22 40% 12%;
+    --destructive: 0 65% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 34 43% 81%;        /* #E4D2BB */
+    --input: 34 43% 81%;
+    --ring: 27 69% 45%;
+    --radius: 0.5rem;
+    --success: 150 60% 40%;
+    --warning: 41 69% 51%;       /* #D8A22A */
+  }
+
+  .dark {
+    --background: 23 33% 8%;     /* #1A120D */
+    --foreground: 33 70% 91%;    /* #F8E9D7 */
+    --card: 19 30% 11%;          /* #231813 */
+    --card-foreground: 33 70% 91%;
+    --popover: 19 30% 11%;
+    --popover-foreground: 33 70% 91%;
+    --primary: 33 69% 51%;       /* #D88A2C */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 21 30% 13%;     /* #2B1E17 */
+    --secondary-foreground: 33 70% 91%;
+    --muted: 20 26% 11%;         /* #241A15 */
+    --muted-foreground: 27 27% 62%; /* #B79A83 */
+    --accent: 22 31% 15%;        /* #33241B */
+    --accent-foreground: 33 70% 91%;
+    --destructive: 0 65% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 22 31% 22%;        /* #4A3427 */
+    --input: 22 31% 22%;
+    --ring: 33 69% 51%;
+    --success: 150 60% 45%;
+    --warning: 41 69% 56%;
+  }
+}
+
+@theme {
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-success: hsl(var(--success));
+  --color-warning: hsl(var(--warning));
+  --color-brand-gold: hsl(var(--brand-gold));
+  --color-brand-amber: hsl(var(--brand-amber));
+  --color-brand-ember: hsl(var(--brand-ember));
+  --color-brand-smoke: hsl(var(--brand-smoke));
+  --color-brand-ivory: hsl(var(--brand-ivory));
+}
+
+@layer base {
+  * { @apply border-border; }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    background-image:
+      radial-gradient(circle at top left, hsl(var(--brand-gold) / 0.08), transparent 24%),
+      radial-gradient(circle at 88% 12%, hsl(var(--brand-amber) / 0.08), transparent 20%),
+      linear-gradient(180deg, hsl(var(--background)), hsl(var(--background)));
+    background-attachment: fixed;
+  }
+  ::selection { background: hsl(var(--brand-amber) / 0.24); }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+}
+
+/* ── Typography Enhancements ────────────────────────────────── */
+.serif-heading {
+  font-family: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+}
+
+/* ── Status dots ────────────────────────────────────────────── */
+.status-online { @apply bg-success; }
+.status-offline { @apply bg-destructive; }
+.status-connecting { @apply bg-warning; }
+
+/* ── Keyframes (kept only essential functional ones) ──────────── */
+@keyframes typing {
+  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+@keyframes fade-in-up {
+  0% { opacity: 0; transform: translateY(12px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in { animation: fade-in-up 0.4s ease-out both; }
