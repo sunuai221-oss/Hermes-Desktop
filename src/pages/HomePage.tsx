@@ -58,6 +58,11 @@ export function HomePage({ onNavigate, onOpenSessionInChat }: Props) {
   }, [memoryStores]);
 
   const activeJobs = jobs.filter(job => !job.paused);
+  const userName = useMemo(() => {
+    const userStore = memoryStores.find(store => store.target === 'user');
+    return extractUserName(userStore?.content || '');
+  }, [memoryStores]);
+  const heroTitle = userName ? `Welcome, ${userName}` : 'Welcome to Hermes Desktop';
 
   return (
     <motion.div
@@ -76,9 +81,7 @@ export function HomePage({ onNavigate, onOpenSessionInChat }: Props) {
         <div className="relative flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex-1 min-w-0">
             <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground/70 font-medium">ΕΡΜΗΣ</p>
-            <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-foreground">
-              Good {greeting()}, {currentProfile}
-            </h1>
+            <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-foreground">{heroTitle}</h1>
             <p className="mt-2 max-w-lg text-sm text-muted-foreground leading-relaxed">
               Your local AI cockpit is {runtimeStatus}. Chat, manage sessions, control the runtime.
             </p>
@@ -277,11 +280,33 @@ function getSessionTimestamp(session: SessionEntry) {
   return candidate > 1e12 ? candidate : candidate * 1000;
 }
 
-function greeting() {
-  const h = new Date().getHours();
-  if (h < 12) return 'morning';
-  if (h < 18) return 'afternoon';
-  return 'evening';
+function extractUserName(content: string) {
+  const text = String(content || '').trim();
+  if (!text) return null;
+
+  const patterns = [
+    /\buser(?:'|\u2019)?s name is\s+([^\n.]+)/i,
+    /\buser name is\s+([^\n.]+)/i,
+    /^\s*name\s*:\s*([^\n]+)/im,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const candidate = normalizeDisplayName(match?.[1] || '');
+    if (candidate) return candidate;
+  }
+
+  return null;
+}
+
+function normalizeDisplayName(value: string) {
+  const cleaned = String(value || '')
+    .replace(/[`*_#]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[.,;:!?]+$/, '');
+
+  return cleaned || null;
 }
 
 function formatNumber(n: number): string {
