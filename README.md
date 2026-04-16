@@ -1,9 +1,13 @@
 # Hermes Desktop
 
+A local-first desktop environment for running and controlling Hermes AI agents on Windows.
+
+<p align="center">
+  <img src="public/Hermes_anime.jpg" width="280" alt="Hermes Desktop mascot"/>
+</p>
+
 [![CI](https://github.com/sunuai221-oss/Hermes-Desktop/actions/workflows/ci.yml/badge.svg)](https://github.com/sunuai221-oss/Hermes-Desktop/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-
-Windows-first local desktop for operating a Hermes runtime hosted in WSL.
 
 ## What Is Hermes Desktop?
 
@@ -19,15 +23,15 @@ Hermes Desktop gives Hermes a repeatable local operator workflow on Windows. Ins
 
 ## Screenshots
 
-### Chat Interface
+### Chat interface
 
-Main operator view for conversations, session continuity, model selection, and runtime-aware chat.
+Main interaction view for working with Hermes agents in real time.
 
 ![Hermes Desktop chat interface](docs/screenshots/chat.png)
 
-### Delegation System
+### Delegation system
 
-Structured subagent task composer for delegation prompts, tool selection, and handoff into chat.
+Interface for orchestrating multi-agent workflows and task delegation.
 
 ![Hermes Desktop delegation system](docs/screenshots/delegation.png)
 
@@ -55,22 +59,44 @@ Optional:
 
 If you develop from a canonical WSL worktree, use Node.js 22 or newer there as well.
 
-## Quick Start
+## Quick Start (recommended)
 
-Recommended path:
+For a fresh checkout on Windows:
 
 ```powershell
 npm run setup
 Copy-Item hermes-desktop.local.cmd.example hermes-desktop.local.cmd
 ```
 
-Then:
+Then update `hermes-desktop.local.cmd` only if your machine needs local overrides and keep it untracked.
 
-1. update `hermes-desktop.local.cmd` only if your machine needs overrides
-2. keep that file untracked
-3. launch `start-hermes-desktop.bat`
+Run the desktop application:
+
+```bat
+start-hermes-desktop.bat
+```
+
+For development mode:
+
+```bat
+start-hermes-desktop-dev.bat
+```
 
 `start-hermes-desktop.bat` is the default entrypoint. It checks Windows dependencies, verifies the Hermes gateway in WSL, builds the UI bundle if needed, and launches Hermes Desktop in Electron.
+
+### Optional browser mode (legacy / compatibility)
+
+Use only if you need browser-based access or legacy workflows.
+
+```bat
+start-builder.bat
+```
+
+For browser development:
+
+```bat
+start-builder-dev.bat
+```
 
 ## Launcher Modes
 
@@ -94,11 +120,15 @@ At a high level, Hermes Desktop follows this flow:
 3. Electron starts or reuses the local backend on Windows
 4. the backend serves the UI over `localhost` and manages Hermes runtime state and files
 
-### Does Electron depend on a hosted web app?
+## Does Hermes Desktop depend on a web app?
 
-No. Hermes Desktop does not require a deployed frontend or any hosted web service. The Electron shell starts or reconnects to the local backend, and that backend serves the same UI locally over HTTP.
+No.
 
-Historical `builder` names still exist in a small number of compatibility routes, environment variables, launcher fallbacks, and state paths. Those are implementation details kept for continuity. The public product name is `Hermes Desktop`.
+Hermes Desktop runs entirely locally. The Electron app starts (or reuses) a local backend, which serves the UI over HTTP.
+
+There is no hosted frontend and no external dependency required.
+
+Some internal paths and variables still use legacy `builder` naming for compatibility. These are internal implementation details only.
 
 ## Planned Improvements
 
@@ -177,9 +207,9 @@ npm run check
 
 ## Known Limitations
 
-- The supported desktop path is Windows with WSL. Native Linux packaging is not part of the current release flow.
-- Hermes Desktop depends on a working Hermes runtime and Hermes CLI inside the configured WSL distribution.
-- Windows packaging and installer flow are still evolving, even though the local desktop workflow is already usable.
+- Windows-first. Linux and macOS are not fully supported yet.
+- Requires a working WSL setup and a Hermes runtime inside the configured distribution.
+- No published installer release yet. The current workflow still relies on manual launch scripts.
 
 ## Troubleshooting
 
