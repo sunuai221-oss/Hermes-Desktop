@@ -27,13 +27,13 @@ Hermes Desktop gives Hermes a repeatable local operator workflow on Windows. Ins
 
 Main interaction view for working with Hermes agents in real time.
 
-![Hermes Desktop chat interface](docs/screenshots/chat.png)
+![Hermes Desktop chat interface](docs/screenshots/chat-20260419.png)
 
 ### Delegation system
 
 Interface for orchestrating multi-agent workflows and task delegation.
 
-![Hermes Desktop delegation system](docs/screenshots/delegation.png)
+![Hermes Desktop delegation system](docs/screenshots/delegation-20260419.png)
 
 ## Platform Support
 
