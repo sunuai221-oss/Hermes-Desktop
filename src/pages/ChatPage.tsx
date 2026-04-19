@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useProfiles } from '../contexts/ProfileContext';
 import { useRuntimeStatus } from '../hooks/useRuntimeStatus';
@@ -14,14 +14,36 @@ interface Props {
   requestNonce?: number;
 }
 
+const CHAT_SHOW_THINKING_KEY = 'hermes_chat_show_thinking';
+const CHAT_SHOW_TOOLS_KEY = 'hermes_chat_show_tools';
+
+function readChatTogglePreference(key: string, defaultValue: boolean): boolean {
+  if (typeof window === 'undefined') return defaultValue;
+  const raw = window.localStorage.getItem(key);
+  if (raw == null) return defaultValue;
+  return raw === '1';
+}
+
 export function ChatPage({ requestedSessionId = null, requestNonce = 0 }: Props) {
   const gateway = useGatewayContext();
   const { currentProfile, gatewayStatus } = useProfiles();
   const { status: chatRuntimeStatus } = useRuntimeStatus(gateway, gatewayStatus.status);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const [showThinking, setShowThinking] = useState(() => readChatTogglePreference(CHAT_SHOW_THINKING_KEY, true));
+  const [showTools, setShowTools] = useState(() => readChatTogglePreference(CHAT_SHOW_TOOLS_KEY, false));
 
   const chat = useChat({ requestedSessionId, requestNonce, audioRef });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(CHAT_SHOW_THINKING_KEY, showThinking ? '1' : '0');
+  }, [showThinking]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(CHAT_SHOW_TOOLS_KEY, showTools ? '1' : '0');
+  }, [showTools]);
 
   return (
     <motion.div
@@ -40,6 +62,10 @@ export function ChatPage({ requestedSessionId = null, requestNonce = 0 }: Props)
             runtimeProviderLabel={chat.runtimeProviderLabel}
             preferredModel={chat.preferredModel}
             currentSessionLabel={chat.currentSessionLabel}
+            showThinking={showThinking}
+            showTools={showTools}
+            onToggleThinking={() => setShowThinking(value => !value)}
+            onToggleTools={() => setShowTools(value => !value)}
             voiceMode={chat.voiceMode}
             onVoiceModeToggle={() => chat.setVoiceMode(v => !v)}
             hasMessages={chat.messages.length > 0 || !!chat.activeSessionId}
@@ -51,6 +77,8 @@ export function ChatPage({ requestedSessionId = null, requestNonce = 0 }: Props)
               messages={chat.messages}
               streaming={chat.streaming}
               sessionId={chat.activeSessionId}
+              showThinking={showThinking}
+              showTools={showTools}
             />
 
             <ChatInput

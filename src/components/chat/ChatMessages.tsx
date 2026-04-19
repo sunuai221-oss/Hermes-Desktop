@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Bot, Mic, User } from 'lucide-react';
+import { Bot, KeyRound, Mic, User } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { Message } from '../../types';
 
@@ -7,11 +7,13 @@ interface ChatMessagesProps {
   messages: Message[];
   streaming: boolean;
   sessionId?: string | null;
+  showThinking: boolean;
+  showTools: boolean;
 }
 
 const SCROLL_BOTTOM_THRESHOLD = 96;
 
-export function ChatMessages({ messages, streaming, sessionId = null }: ChatMessagesProps) {
+export function ChatMessages({ messages, streaming, sessionId = null, showThinking, showTools }: ChatMessagesProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const stickToBottomRef = useRef(true);
@@ -65,40 +67,43 @@ export function ChatMessages({ messages, streaming, sessionId = null }: ChatMess
   return (
     <div ref={containerRef} className="flex-1 overflow-auto p-5 space-y-4">
       {messages.map((message, index) => (
-        <div
-          key={index}
-          className={cn(
-            'flex gap-3 max-w-[85%] animate-fade-in',
-            message.role === 'user' ? 'ml-auto flex-row-reverse' : 'mr-auto',
-          )}
-        >
-          <div className={cn(
-            'w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0',
-            message.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground',
-          )}>
-            {message.role === 'user' ? <User size={16} /> : <Bot size={16} />}
+        shouldRenderMessage(message, showThinking, showTools, streaming && index === messages.length - 1 && message.role === 'assistant') ? (
+          <div
+            key={index}
+            className={cn(
+              'flex gap-3 max-w-[85%] animate-fade-in',
+              message.role === 'user' ? 'ml-auto flex-row-reverse' : 'mr-auto',
+            )}
+          >
+            <div className={cn(
+              'w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0',
+              message.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground',
+            )}>
+              {message.role === 'user' ? <User size={16} /> : <Bot size={16} />}
+            </div>
+            <div className={cn(
+              'px-4 py-3 rounded-lg text-sm leading-relaxed',
+              message.role === 'user'
+                ? 'bg-primary/15 border border-primary/15 text-foreground'
+                : 'bg-muted/50 border border-border text-foreground',
+            )}>
+              {message.isVoice && (
+                <div className="mb-2 inline-flex items-center gap-1 rounded-full bg-muted px-2 py-1 text-[10px] text-muted-foreground">
+                  <Mic size={10} />
+                  Voice
+                </div>
+              )}
+              <MessageContent content={message.content} showThinking={showThinking} />
+              {showTools && hasToolData(message) && <ToolCallList message={message} />}
+              {message.audioUrl && (
+                <audio controls preload="none" src={message.audioUrl} className="mt-3 w-full max-w-sm" />
+              )}
+              {streaming && index === messages.length - 1 && message.role === 'assistant' && (
+                <span className="inline-block w-2 h-4 bg-primary/60 ml-0.5 animate-pulse rounded-sm" />
+              )}
+            </div>
           </div>
-          <div className={cn(
-            'px-4 py-3 rounded-lg text-sm leading-relaxed',
-            message.role === 'user'
-              ? 'bg-primary/15 border border-primary/15 text-foreground'
-              : 'bg-muted/50 border border-border text-foreground/85',
-          )}>
-            {message.isVoice && (
-              <div className="mb-2 inline-flex items-center gap-1 rounded-full bg-muted px-2 py-1 text-[10px] text-muted-foreground">
-                <Mic size={10} />
-                Voice
-              </div>
-            )}
-            <MessageContent content={message.content} />
-            {message.audioUrl && (
-              <audio controls preload="none" src={message.audioUrl} className="mt-3 w-full max-w-sm" />
-            )}
-            {streaming && index === messages.length - 1 && message.role === 'assistant' && (
-              <span className="inline-block w-2 h-4 bg-primary/60 ml-0.5 animate-pulse rounded-sm" />
-            )}
-          </div>
-        </div>
+        ) : null
       ))}
       <div ref={chatEndRef} />
     </div>
@@ -107,8 +112,68 @@ export function ChatMessages({ messages, streaming, sessionId = null }: ChatMess
 
 // ── Inline markdown (simplified for component) ─────────────
 
-function MessageContent({ content }: { content: string }) {
+function MessageContent({ content, showThinking }: { content: string; showThinking: boolean }) {
   if (!content) return null;
+  const segments = splitThinkSegments(content).filter(segment => showThinking || segment.kind !== 'think');
+  if (segments.length === 0) return null;
+  return (
+    <div className="space-y-3">
+      {segments.map((segment, index) => (
+        <div
+          key={`${segment.kind}_${index}`}
+          className={segment.kind === 'think' ? 'text-muted-foreground/70' : 'text-foreground'}
+        >
+          <RenderedSegment content={segment.content} isThink={segment.kind === 'think'} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ToolCallList({ message }: { message: Message }) {
+  const toolCalls = message.toolCalls || [];
+  const resultText = stringifyToolPayload(message.toolResults);
+
+  return (
+    <div className="mt-3 space-y-2">
+      {toolCalls.map((toolCall, index) => {
+        const toolName = toolCall.function?.name || toolCall.name || `tool ${index + 1}`;
+        const argumentsText = stringifyToolPayload(toolCall.function?.arguments || toolCall.arguments);
+        return (
+          <div key={toolCall.id || `${toolName}_${index}`} className="rounded-lg border border-border/70 bg-background/40 px-3 py-2">
+            <div className="flex items-center gap-1.5 text-[11px] font-medium text-primary">
+              <KeyRound size={11} />
+              <span>{toolName}</span>
+            </div>
+            {argumentsText && (
+              <pre className="mt-2 whitespace-pre-wrap break-words rounded bg-background/60 px-2.5 py-2 text-[11px] text-muted-foreground/80">
+                {argumentsText}
+              </pre>
+            )}
+          </div>
+        );
+      })}
+      {!toolCalls.length && message.toolName && (
+        <div className="rounded-lg border border-border/70 bg-background/40 px-3 py-2">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium text-primary">
+            <KeyRound size={11} />
+            <span>{message.toolName}</span>
+          </div>
+        </div>
+      )}
+      {resultText && (
+        <div className="rounded-lg border border-border/70 bg-background/40 px-3 py-2">
+          <div className="text-[11px] font-medium text-muted-foreground/80">Tool result</div>
+          <pre className="mt-2 whitespace-pre-wrap break-words rounded bg-background/60 px-2.5 py-2 text-[11px] text-muted-foreground/80">
+            {resultText}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RenderedSegment({ content, isThink }: { content: string; isThink: boolean }) {
   const blocks = content.split('\n');
   return (
     <div className="space-y-1">
@@ -119,7 +184,7 @@ function MessageContent({ content }: { content: string }) {
           if (match) {
             const level = match[1].length;
             const text = block.slice(match[0].length);
-            const cls = 'font-semibold text-foreground mt-2';
+            const cls = cn('font-semibold mt-2', isThink ? 'text-muted-foreground/75' : 'text-foreground');
             if (level === 1) return <h1 key={i} className={cls}>{text}</h1>;
             if (level === 2) return <h2 key={i} className={cls}>{text}</h2>;
             if (level === 3) return <h3 key={i} className={cls}>{text}</h3>;
@@ -128,10 +193,78 @@ function MessageContent({ content }: { content: string }) {
             return <h6 key={i} className={cls}>{text}</h6>;
           }
         }
-        return <p key={i} className="whitespace-pre-wrap">{renderInline(block)}</p>;
+        return (
+          <p key={i} className={cn('whitespace-pre-wrap', isThink ? 'text-muted-foreground/70' : 'text-foreground')}>
+            {renderInline(block)}
+          </p>
+        );
       })}
     </div>
   );
+}
+
+function splitThinkSegments(content: string): Array<{ kind: 'think' | 'output'; content: string }> {
+  const regex = /<\/?think>/gi;
+  const segments: Array<{ kind: 'think' | 'output'; content: string }> = [];
+  let mode: 'think' | 'output' = 'output';
+  let cursor = 0;
+
+  const pushSegment = (kind: 'think' | 'output', value: string) => {
+    if (!value) return;
+    const normalized = value.replace(/^\n+|\n+$/g, '');
+    if (!normalized) return;
+    const previous = segments[segments.length - 1];
+    if (previous?.kind === kind) {
+      previous.content = `${previous.content}\n${normalized}`;
+      return;
+    }
+    segments.push({ kind, content: normalized });
+  };
+
+  for (const match of content.matchAll(regex)) {
+    const index = match.index ?? 0;
+    const token = match[0].toLowerCase();
+    pushSegment(mode, content.slice(cursor, index));
+    mode = token === '<think>' ? 'think' : 'output';
+    cursor = index + match[0].length;
+  }
+
+  pushSegment(mode, content.slice(cursor));
+  return segments.length > 0 ? segments : [{ kind: 'output', content }];
+}
+
+function hasToolData(message: Message): boolean {
+  return Boolean(message.toolCalls?.length || message.toolName || message.toolResults != null);
+}
+
+function hasVisibleTextContent(content: string, showThinking: boolean): boolean {
+  const segments = splitThinkSegments(content).filter(segment => showThinking || segment.kind !== 'think');
+  return segments.some(segment => segment.content.trim().length > 0);
+}
+
+function shouldRenderMessage(message: Message, showThinking: boolean, showTools: boolean, isStreamingAssistant: boolean): boolean {
+  if (isStreamingAssistant) return true;
+  if (message.audioUrl || message.isVoice) return true;
+  if (showTools && hasToolData(message)) return true;
+  return hasVisibleTextContent(message.content, showThinking);
+}
+
+function stringifyToolPayload(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return '';
+    try {
+      return JSON.stringify(JSON.parse(trimmed), null, 2);
+    } catch {
+      return trimmed;
+    }
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 function renderInline(text: string): React.ReactNode {

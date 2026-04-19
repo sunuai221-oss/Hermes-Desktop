@@ -160,7 +160,14 @@ export const sessions = {
   continue: (id: string, payload?: { source?: string; user_id?: string; model?: string; title?: string }) =>
     http.post(`/api/sessions/${encodeURIComponent(id)}/continue`, payload || {}),
   appendMessages: (id: string, payload: {
-    messages: Array<{ role: string; content: string; timestamp?: number }>;
+    messages: Array<{
+      role: string;
+      content: string;
+      timestamp?: number;
+      tool_calls?: unknown;
+      tool_name?: string;
+      tool_results?: unknown;
+    }>;
     model?: string;
     source?: string;
     user_id?: string;

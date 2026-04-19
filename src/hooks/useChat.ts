@@ -4,6 +4,7 @@ import { useProfiles } from '../contexts/ProfileContext';
 import { useGatewayContext } from '../contexts/GatewayContext';
 import * as apiClient from '../api';
 import type {
+  ChatToolCall,
   ContextReferenceAttachment,
   ImageAttachment,
   Message,
@@ -256,6 +257,57 @@ function getModelContextWindow(config: { model?: Record<string, unknown> } | nul
   return inferContextWindowFromModelName(modelName);
 }
 
+function normalizeToolCalls(input: unknown): ChatToolCall[] | undefined {
+  if (!Array.isArray(input)) return undefined;
+  const calls = input
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+    .map((item) => ({
+      ...item,
+      id: typeof item.id === 'string' ? item.id : undefined,
+      type: typeof item.type === 'string' ? item.type : undefined,
+      name: typeof item.name === 'string' ? item.name : undefined,
+      arguments: typeof item.arguments === 'string' ? item.arguments : undefined,
+      function: item.function && typeof item.function === 'object'
+        ? {
+            name: typeof (item.function as { name?: unknown }).name === 'string'
+              ? String((item.function as { name?: unknown }).name)
+              : undefined,
+            arguments: typeof (item.function as { arguments?: unknown }).arguments === 'string'
+              ? String((item.function as { arguments?: unknown }).arguments)
+              : undefined,
+          }
+        : undefined,
+    } satisfies ChatToolCall));
+
+  return calls.length > 0 ? calls : undefined;
+}
+
+function mergeToolCallDeltas(current: ChatToolCall[], deltas: unknown): ChatToolCall[] {
+  const normalizedDeltas = normalizeToolCalls(deltas);
+  if (!normalizedDeltas?.length) return current;
+
+  const next = [...current];
+  normalizedDeltas.forEach((delta, index) => {
+    const existing = next[index] || {};
+    const existingFunction = existing.function || {};
+    const deltaFunction = delta.function || {};
+    next[index] = {
+      ...existing,
+      ...delta,
+      id: delta.id || existing.id,
+      type: delta.type || existing.type,
+      name: delta.name || existing.name,
+      arguments: `${existing.arguments || ''}${delta.arguments || ''}` || undefined,
+      function: {
+        name: `${existingFunction.name || ''}${deltaFunction.name || ''}` || undefined,
+        arguments: `${existingFunction.arguments || ''}${deltaFunction.arguments || ''}` || undefined,
+      },
+    };
+  });
+
+  return next;
+}
+
 function isMessageRole(value: unknown): value is Message['role'] {
   return value === 'user' || value === 'assistant' || value === 'system';
 }
@@ -272,6 +324,9 @@ function normalizePersistedMessages(input: unknown): Message[] {
       audioUrl: typeof item.audioUrl === 'string' ? item.audioUrl : undefined,
       isVoice: item.isVoice === true,
       tokenCount: typeof item.tokenCount === 'number' ? item.tokenCount : undefined,
+      toolCalls: normalizeToolCalls(item.toolCalls),
+      toolName: typeof item.toolName === 'string' ? item.toolName : undefined,
+      toolResults: Object.prototype.hasOwnProperty.call(item, 'toolResults') ? item.toolResults : undefined,
     }));
 }
 
@@ -548,6 +603,13 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
               tokenCount: typeof (entry as { token_count?: unknown }).token_count === 'number'
                 ? Number((entry as { token_count?: unknown }).token_count)
                 : undefined,
+              toolCalls: normalizeToolCalls((entry as { tool_calls?: unknown }).tool_calls),
+              toolName: typeof (entry as { tool_name?: unknown }).tool_name === 'string'
+                ? String((entry as { tool_name?: unknown }).tool_name)
+                : undefined,
+              toolResults: Object.prototype.hasOwnProperty.call(entry as object, 'tool_results')
+                ? (entry as { tool_results?: unknown }).tool_results
+                : undefined,
             }))
         : [];
       setMessages(draftMessages.length >= transcript.length ? draftMessages : transcript);
@@ -653,6 +715,9 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
     ];
 
     let finalAssistantText = '';
+    let finalAssistantToolCalls: ChatToolCall[] | undefined;
+    let finalAssistantToolName: string | undefined;
+    let finalAssistantToolResults: unknown;
     let persistedByGateway = false;
     try {
       const response = await apiClient.gateway.streamChat({ model: effectiveModel, provider, think: preferredThink, messages: payloadMessages, stream: true, session_id: sessionId || undefined, source: 'api-server' });
@@ -662,6 +727,7 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
       const decoder = new TextDecoder();
       let buffer = '';
       let accumulated = '';
+      let accumulatedToolCalls: ChatToolCall[] = [];
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -675,6 +741,12 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
           try {
             const parsed = JSON.parse(data);
             const content = parsed.choices?.[0]?.delta?.content;
+            const toolCalls = parsed.choices?.[0]?.delta?.tool_calls;
+            if (Array.isArray(toolCalls) && toolCalls.length > 0) {
+              accumulatedToolCalls = mergeToolCallDeltas(accumulatedToolCalls, toolCalls);
+              finalAssistantToolCalls = accumulatedToolCalls;
+              updateLastAssistantMessage(message => ({ ...message, toolCalls: accumulatedToolCalls }));
+            }
             if (!content) continue;
             accumulated += content;
             updateLastAssistantMessage(message => ({ ...message, content: accumulated }));
@@ -682,25 +754,45 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
         }
       }
       finalAssistantText = accumulated;
+      finalAssistantToolCalls = accumulatedToolCalls.length > 0 ? accumulatedToolCalls : undefined;
       await maybeSpeakAssistantReply(accumulated);
     } catch {
       try {
         const response = await apiClient.gateway.chat({ model: effectiveModel, provider, think: preferredThink, messages: payloadMessages, session_id: sessionId || undefined, source: 'api-server' });
-        const content = response.data.choices?.[0]?.message?.content || 'No response.';
+        const assistantMessage = response.data.choices?.[0]?.message || {};
+        const content = assistantMessage.content || 'No response.';
         finalAssistantText = content;
+        finalAssistantToolCalls = normalizeToolCalls(assistantMessage.tool_calls);
+        finalAssistantToolName = typeof assistantMessage.tool_name === 'string' ? assistantMessage.tool_name : undefined;
+        finalAssistantToolResults = Object.prototype.hasOwnProperty.call(assistantMessage, 'tool_results')
+          ? assistantMessage.tool_results
+          : undefined;
         persistedByGateway = true;
         if (!sessionId && response.data?.session_id) { sessionId = String(response.data.session_id); setActiveSessionId(sessionId); }
-        updateLastAssistantMessage(message => ({ ...message, content }));
+        updateLastAssistantMessage(message => ({
+          ...message,
+          content,
+          toolCalls: finalAssistantToolCalls,
+          toolName: finalAssistantToolName,
+          toolResults: finalAssistantToolResults,
+        }));
         await maybeSpeakAssistantReply(content);
       } catch {
         finalAssistantText = 'Gateway unreachable. Verify that the Hermes Gateway is running.';
         updateLastAssistantMessage(message => ({ ...message, content: finalAssistantText }));
       }
     } finally {
-      if (sessionId && finalAssistantText && !persistedByGateway) {
+      if (sessionId && !persistedByGateway && (finalAssistantText || finalAssistantToolCalls?.length || finalAssistantToolName || finalAssistantToolResults != null)) {
         apiClient.sessions.appendMessages(sessionId, { model: effectiveModel, source: 'api-server', messages: [
           { role: 'user', content: userMsg.content, timestamp: userMsg.timestamp },
-          { role: 'assistant', content: finalAssistantText, timestamp: Date.now() },
+          {
+            role: 'assistant',
+            content: finalAssistantText,
+            timestamp: Date.now(),
+            tool_calls: finalAssistantToolCalls,
+            tool_name: finalAssistantToolName,
+            tool_results: finalAssistantToolResults,
+          },
         ] }).catch(() => {});
       }
       setStreaming(false);

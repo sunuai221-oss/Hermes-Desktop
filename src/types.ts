@@ -202,6 +202,18 @@ export interface SessionEntry {
   [key: string]: unknown;
 }
 
+export interface ChatToolCall {
+  id?: string;
+  type?: string;
+  name?: string;
+  arguments?: string;
+  function?: {
+    name?: string;
+    arguments?: string;
+  };
+  [key: string]: unknown;
+}
+
 export interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
@@ -209,6 +221,9 @@ export interface Message {
   audioUrl?: string;
   isVoice?: boolean;
   tokenCount?: number;
+  toolCalls?: ChatToolCall[];
+  toolName?: string;
+  toolResults?: unknown;
 }
 
 export interface ImageAttachment {

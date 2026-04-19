@@ -1,4 +1,5 @@
-import { Trash2, Volume2 } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { BrainCircuit, KeyRound, Trash2, Volume2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { ConnectionStatus } from '../../types';
 
@@ -8,6 +9,10 @@ interface ChatToolbarProps {
   runtimeProviderLabel: string;
   preferredModel: string;
   currentSessionLabel: string | null;
+  showThinking: boolean;
+  showTools: boolean;
+  onToggleThinking: () => void;
+  onToggleTools: () => void;
   voiceMode: boolean;
   onVoiceModeToggle: () => void;
   hasMessages: boolean;
@@ -20,6 +25,10 @@ export function ChatToolbar({
   runtimeProviderLabel,
   preferredModel,
   currentSessionLabel,
+  showThinking,
+  showTools,
+  onToggleThinking,
+  onToggleTools,
   voiceMode,
   onVoiceModeToggle,
   hasMessages,
@@ -68,6 +77,21 @@ export function ChatToolbar({
 
         <div className="h-6 w-[1px] bg-muted mx-1 hidden md:block" />
 
+        <div className="flex items-center gap-1">
+          <IconToggle
+            icon={<BrainCircuit size={13} />}
+            label="Thinking"
+            active={showThinking}
+            onClick={onToggleThinking}
+          />
+          <IconToggle
+            icon={<KeyRound size={13} />}
+            label="Tools"
+            active={showTools}
+            onClick={onToggleTools}
+          />
+        </div>
+
         <button
           onClick={onVoiceModeToggle}
           className={cn(
@@ -89,5 +113,34 @@ export function ChatToolbar({
         </button>
       )}
     </div>
+  );
+}
+
+function IconToggle({
+  icon,
+  label,
+  active,
+  onClick,
+}: {
+  icon: ReactNode;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={`${active ? 'Hide' : 'Show'} ${label}`}
+      aria-label={`${active ? 'Hide' : 'Show'} ${label}`}
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors',
+        active
+          ? 'border-primary/35 bg-primary/12 text-primary'
+          : 'border-border bg-muted text-muted-foreground hover:text-foreground',
+      )}
+    >
+      {icon}
+      {label}
+    </button>
   );
 }
