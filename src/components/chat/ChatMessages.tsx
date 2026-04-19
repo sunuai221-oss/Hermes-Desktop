@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Bot, Mic, User } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { Message } from '../../types';
@@ -6,13 +6,49 @@ import type { Message } from '../../types';
 interface ChatMessagesProps {
   messages: Message[];
   streaming: boolean;
-  chatEndRef: React.RefObject<HTMLDivElement | null>;
+  sessionId?: string | null;
 }
 
-export function ChatMessages({ messages, streaming, chatEndRef }: ChatMessagesProps) {
+const SCROLL_BOTTOM_THRESHOLD = 96;
+
+export function ChatMessages({ messages, streaming, sessionId = null }: ChatMessagesProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const stickToBottomRef = useRef(true);
+  const previousSessionIdRef = useRef<string | null>(sessionId);
+
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  });
+    if (messages.length === 0) return;
+
+    const container = containerRef.current;
+    if (!container) return;
+
+    const updateStickiness = () => {
+      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+      stickToBottomRef.current = distanceFromBottom <= SCROLL_BOTTOM_THRESHOLD;
+    };
+
+    updateStickiness();
+    container.addEventListener('scroll', updateStickiness, { passive: true });
+    return () => container.removeEventListener('scroll', updateStickiness);
+  }, [messages.length]);
+
+  useEffect(() => {
+    if (previousSessionIdRef.current === sessionId) return;
+    previousSessionIdRef.current = sessionId;
+    stickToBottomRef.current = true;
+    chatEndRef.current?.scrollIntoView({ block: 'end' });
+  }, [sessionId]);
+
+  const lastMessage = messages[messages.length - 1];
+
+  useEffect(() => {
+    if (!stickToBottomRef.current) return;
+    chatEndRef.current?.scrollIntoView({
+      behavior: streaming ? 'auto' : 'smooth',
+      block: 'end',
+    });
+  }, [messages.length, lastMessage?.content, lastMessage?.audioUrl, streaming]);
 
   if (messages.length === 0) {
     return (
@@ -27,7 +63,7 @@ export function ChatMessages({ messages, streaming, chatEndRef }: ChatMessagesPr
   }
 
   return (
-    <div className="flex-1 overflow-auto p-5 space-y-4">
+    <div ref={containerRef} className="flex-1 overflow-auto p-5 space-y-4">
       {messages.map((message, index) => (
         <div
           key={index}

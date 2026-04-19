@@ -18,7 +18,6 @@ export function ChatPage({ requestedSessionId = null, requestNonce = 0 }: Props)
   const gateway = useGatewayContext();
   const { currentProfile, gatewayStatus } = useProfiles();
   const { status: chatRuntimeStatus } = useRuntimeStatus(gateway, gatewayStatus.status);
-  const chatEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
 
@@ -51,7 +50,7 @@ export function ChatPage({ requestedSessionId = null, requestNonce = 0 }: Props)
             <ChatMessages
               messages={chat.messages}
               streaming={chat.streaming}
-              chatEndRef={chatEndRef}
+              sessionId={chat.activeSessionId}
             />
 
             <ChatInput
