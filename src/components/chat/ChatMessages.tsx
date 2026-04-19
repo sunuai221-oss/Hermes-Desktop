@@ -131,6 +131,13 @@ function renderInline(text: string): React.ReactNode {
       parts.push(remaining);
       break;
     }
+    if (nextSpecial === 0) {
+      // Prevent infinite loops on unmatched markdown markers like
+      // "* bullet" or stray backticks emitted by the model.
+      parts.push(remaining[0]);
+      remaining = remaining.slice(1);
+      continue;
+    }
     parts.push(remaining.slice(0, nextSpecial));
     remaining = remaining.slice(nextSpecial);
   }

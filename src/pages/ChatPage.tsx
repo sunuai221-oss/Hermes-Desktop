@@ -4,7 +4,6 @@ import { useProfiles } from '../contexts/ProfileContext';
 import { useRuntimeStatus } from '../hooks/useRuntimeStatus';
 import { useGatewayContext } from '../contexts/GatewayContext';
 import { useChat } from '../hooks/useChat';
-import type { ChatProvider } from '../hooks/useChat';
 import { Card } from '../components/Card';
 import { ChatToolbar } from '../components/chat/ChatToolbar';
 import { ChatMessages } from '../components/chat/ChatMessages';
@@ -41,11 +40,6 @@ export function ChatPage({ requestedSessionId = null, requestNonce = 0 }: Props)
             runtimeStatus={chatRuntimeStatus}
             runtimeProviderLabel={chat.runtimeProviderLabel}
             preferredModel={chat.preferredModel}
-            provider={chat.provider}
-            onProviderChange={(p: string) => chat.setProvider(p as ChatProvider)}
-            model={chat.model}
-            onModelChange={chat.setModel}
-            modelOptions={chat.modelOptions}
             currentSessionLabel={chat.currentSessionLabel}
             voiceMode={chat.voiceMode}
             onVoiceModeToggle={() => chat.setVoiceMode(v => !v)}

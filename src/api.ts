@@ -7,14 +7,13 @@ import type {
   Message,
   ModelThinkMode,
   OllamaModel,
-  ProviderModelOption,
   VoiceChatResponse,
   VoiceSynthesisResponse,
 } from './types';
 
 type ChatRequestBody = {
   model: string;
-  provider?: 'codex-openai' | 'ollama' | 'lmstudio' | 'nous';
+  provider?: 'codex-openai' | 'custom' | 'ollama' | 'nous';
   think?: ModelThinkMode;
   messages: Array<{
     role: Message['role'];
@@ -174,7 +173,6 @@ export const sessions = {
 
 export const models = {
   list: () => http.get<{ models: OllamaModel[] }>('/api/models'),
-  lmstudio: () => http.get<{ models: ProviderModelOption[] }>('/api/models', { params: { provider: 'lmstudio' } }),
 };
 
 export const skills = {

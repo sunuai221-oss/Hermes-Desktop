@@ -12,7 +12,9 @@ if not defined HERMES_WSL_DISTRO set "HERMES_WSL_DISTRO=Ubuntu"
 if not defined HERMES_GATEWAY_PORT set "HERMES_GATEWAY_PORT=8642"
 
 echo [Hermes Gateway] Launching WSL gateway...
-wsl.exe -d "%HERMES_WSL_DISTRO%" -e bash -lc "set -e; if [ -n \"$HERMES_WSL_HOME\" ]; then export HERMES_HOME=\"$HERMES_WSL_HOME\"; fi; HERMES_BIN=\"${HERMES_CLI_PATH:-$(command -v hermes || true)}\"; if [ -z \"$HERMES_BIN\" ] && [ -x \"$HOME/.local/bin/hermes\" ]; then HERMES_BIN=\"$HOME/.local/bin/hermes\"; fi; if [ -z \"$HERMES_BIN\" ]; then echo 'Hermes CLI not found in WSL' >&2; exit 127; fi; exec \"$HERMES_BIN\" gateway run --port %HERMES_GATEWAY_PORT%"
+REM Do NOT quote the -d distro argument — when cmd.exe cwd contains spaces,
+REM wsl.exe receives literal quote characters and fails with DISTRO_NOT_FOUND.
+wsl.exe -d %HERMES_WSL_DISTRO% -e bash -lc "if [ -n \"$HERMES_WSL_HOME\" ]; then export HERMES_HOME=\"$HERMES_WSL_HOME\"; fi; export PORT=%HERMES_GATEWAY_PORT%; export PATH=\"$HOME/.local/bin:$PATH\"; exec hermes gateway run"
 echo.
 echo [Hermes Gateway] Process exited with code %ERRORLEVEL%.
 pause

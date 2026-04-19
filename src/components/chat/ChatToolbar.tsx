@@ -1,44 +1,33 @@
-import { ChevronDown, Trash2, Volume2 } from 'lucide-react';
+import { Trash2, Volume2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { ConnectionStatus } from '../../types';
 
 interface ChatToolbarProps {
-  // Profile
   currentProfile: string;
-  // Status
   runtimeStatus: ConnectionStatus;
   runtimeProviderLabel: string;
   preferredModel: string;
-  // Provider
-  provider: string;
-  onProviderChange: (provider: string) => void;
-  // Model
-  model: string;
-  onModelChange: (model: string) => void;
-  modelOptions: Array<{ label: string; value: string }>;
-  // Session
   currentSessionLabel: string | null;
-  // Voice
   voiceMode: boolean;
   onVoiceModeToggle: () => void;
-  // Actions
   hasMessages: boolean;
   onNewChat: () => void;
 }
 
 export function ChatToolbar({
   currentProfile,
-  runtimeStatus, runtimeProviderLabel, preferredModel,
-  provider, onProviderChange,
-  model, onModelChange, modelOptions,
+  runtimeStatus,
+  runtimeProviderLabel,
+  preferredModel,
   currentSessionLabel,
-  voiceMode, onVoiceModeToggle,
-  hasMessages, onNewChat,
+  voiceMode,
+  onVoiceModeToggle,
+  hasMessages,
+  onNewChat,
 }: ChatToolbarProps) {
   return (
     <div className="flex items-center justify-between mb-4 flex-shrink-0 gap-3">
       <div className="flex items-center gap-4 flex-wrap">
-        {/* Profile + status */}
         <div className="flex items-center gap-2">
           <div className={cn(
             'w-8 h-8 rounded-md flex items-center justify-center font-bold text-xs',
@@ -62,9 +51,12 @@ export function ChatToolbar({
               runtime {runtimeProviderLabel} {'->'} {preferredModel}
             </p>
             <p className="mt-1 max-w-[34rem] truncate text-[10px] text-muted-foreground/80">
-              chat provider: <span className="font-mono text-foreground/75">{provider}</span>
+              chat provider: <span className="font-mono text-foreground/75">{runtimeProviderLabel}</span>
               {' • '}
-              model: <span className="font-mono text-foreground/75">{model || preferredModel}</span>
+              model: <span className="font-mono text-foreground/75">{preferredModel}</span>
+            </p>
+            <p className="mt-1 max-w-[34rem] truncate text-[10px] text-muted-foreground/70">
+              managed by Hermes runtime config
             </p>
             {currentSessionLabel && (
               <p className="mt-1 max-w-[28rem] truncate text-[10px] text-muted-foreground/80">
@@ -76,49 +68,6 @@ export function ChatToolbar({
 
         <div className="h-6 w-[1px] bg-muted mx-1 hidden md:block" />
 
-        {/* Provider selector */}
-        <div className="relative">
-          <select
-            value={provider}
-            onChange={e => onProviderChange(e.target.value)}
-            title="Provider selection"
-            aria-label="Provider selection"
-            className="appearance-none bg-muted border border-border rounded-lg px-3 py-1.5 pr-8 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/40 cursor-pointer"
-          >
-            <option value="codex-openai">OpenAI / Codex</option>
-            <option value="nous">Nous Research</option>
-            <option value="ollama">Ollama</option>
-            <option value="lmstudio">LM Studio</option>
-          </select>
-          <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-muted-foreground" />
-        </div>
-
-        {/* Model selector */}
-        {modelOptions.length > 0 ? (
-          <div className="relative">
-            <select
-              value={model}
-              onChange={e => onModelChange(e.target.value)}
-              title="Model selection for chat"
-              aria-label="Model selection for chat"
-              className="appearance-none bg-muted border border-border rounded-lg px-3 py-1.5 pr-8 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/40 cursor-pointer"
-            >
-              {modelOptions.map(option => (
-                <option key={option.value} value={option.value} className="bg-card">{option.label}</option>
-              ))}
-            </select>
-            <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-muted-foreground" />
-          </div>
-        ) : (
-          <input
-            value={model}
-            onChange={e => onModelChange(e.target.value)}
-            placeholder="Model name"
-            className="bg-muted border border-border rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/40"
-          />
-        )}
-
-        {/* Voice mode toggle */}
         <button
           onClick={onVoiceModeToggle}
           className={cn(
@@ -131,7 +80,6 @@ export function ChatToolbar({
         </button>
       </div>
 
-      {/* New chat */}
       {hasMessages && (
         <button
           onClick={onNewChat}

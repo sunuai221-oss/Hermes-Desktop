@@ -7,15 +7,16 @@ import type {
   ContextReferenceAttachment,
   ImageAttachment,
   Message,
-  ProviderModelOption,
   ResolvedContextReference,
 } from '../types';
 
 type VoiceState = 'idle' | 'recording' | 'processing' | 'speaking';
-export type ChatProvider = 'codex-openai' | 'ollama' | 'lmstudio' | 'nous';
+export type ChatProvider = 'codex-openai' | 'custom' | 'ollama' | 'nous';
+type RuntimeProvider = ChatProvider | 'profile-default';
 
 const MAX_IMAGES = 5;
 const ACTIVE_CHAT_SESSION_KEY_PREFIX = 'hermes_active_chat_session:';
+const ACTIVE_CHAT_MESSAGES_KEY_PREFIX = 'hermes_active_chat_messages:';
 
 export const referenceTemplates: Array<{
   kind: ContextReferenceAttachment['kind'];
@@ -115,42 +116,61 @@ async function normalizeImageFile(file: File): Promise<{ fileName: string; dataU
   return { fileName: `${baseName}.png`, ...converted };
 }
 
-function getRuntimeProviderKey(config: { model?: { provider?: string } } | null): ChatProvider {
-  const p = config?.model?.provider?.toLowerCase();
-  if (p === 'ollama') return 'ollama';
-  if (p === 'lmstudio') return 'lmstudio';
-  if (p === 'nous') return 'nous';
-  return 'codex-openai';
+function isOllamaBaseUrl(value: string | undefined): boolean {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized.includes('127.0.0.1:11434') || normalized.includes('localhost:11434');
 }
 
-function getRuntimeProviderLabel(config: { model?: { provider?: string } } | null): string {
+function isLlamaCppBaseUrl(value: string | undefined): boolean {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized.includes('127.0.0.1:8081') || normalized.includes('localhost:8081');
+}
+
+function normalizeRuntimeValue(value: string | undefined): string {
+  return String(value || '').trim().toLowerCase();
+}
+
+function getRuntimeProviderKey(config: { model?: { provider?: string; base_url?: string } } | null): RuntimeProvider {
+  const provider = normalizeRuntimeValue(config?.model?.provider);
+  const baseUrl = String(config?.model?.base_url || '').trim();
+  if (provider === 'ollama' || ((provider === 'custom' || !provider) && isOllamaBaseUrl(baseUrl))) return 'ollama';
+  if (provider === 'custom' || (!provider && !!baseUrl)) return 'custom';
+  if (provider === 'codex-openai' || provider === 'openai-codex' || provider === 'openai' || provider === 'codex') return 'codex-openai';
+  if (provider === 'nous' || provider === 'nous-research' || provider === 'nousresearch') return 'nous';
+  return 'profile-default';
+}
+
+function getRuntimeProviderLabel(config: { model?: { provider?: string; base_url?: string } } | null): string {
   const key = getRuntimeProviderKey(config);
+  const provider = normalizeRuntimeValue(config?.model?.provider);
+  const baseUrl = String(config?.model?.base_url || '').trim();
   if (key === 'ollama') return 'Ollama';
-  if (key === 'lmstudio') return 'LM Studio';
-  if (key === 'nous') return 'Nous Research';
-  return 'OpenAI / Codex';
+  if (key === 'custom') return isLlamaCppBaseUrl(baseUrl) ? 'llama.cpp' : 'Custom API';
+  if (key === 'codex-openai') return 'OpenAI / Codex';
+  if (key === 'profile-default') return provider || 'Profile default';
+  return 'Nous Research';
 }
 
-function getModelOptions(
-  provider: ChatProvider,
-  preferredModel: string,
-  ollamaModels: Array<{ name: string }>,
-  lmStudioModels: ProviderModelOption[],
-): Array<{ label: string; value: string }> {
-  if (provider === 'codex-openai') {
-    const defaults = ['gpt-4o', 'gpt-4o-mini', 'o3-mini', 'codex-mini'];
-    const extras = preferredModel && !defaults.includes(preferredModel) ? [preferredModel] : [];
-    return [...extras, ...defaults].map(name => ({ label: name, value: name }));
-  }
-  if (provider === 'nous') {
-    const defaults = ['mimo-v2-pro', 'deephermes-3', 'hermes-3'];
-    const extras = preferredModel && !defaults.includes(preferredModel) ? [preferredModel] : [];
-    return [...extras, ...defaults].map(name => ({ label: name, value: name }));
-  }
-  if (provider === 'ollama') {
-    return ollamaModels.map(m => ({ label: m.name, value: m.name }));
-  }
-  return lmStudioModels.map(m => ({ label: m.name, value: m.id ?? m.name }));
+function isMessageRole(value: unknown): value is Message['role'] {
+  return value === 'user' || value === 'assistant' || value === 'system';
+}
+
+function normalizePersistedMessages(input: unknown): Message[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+    .filter(item => isMessageRole(item.role))
+    .map(item => ({
+      role: item.role as Message['role'],
+      content: typeof item.content === 'string' ? item.content : String(item.content ?? ''),
+      timestamp: typeof item.timestamp === 'number' ? item.timestamp : undefined,
+      audioUrl: typeof item.audioUrl === 'string' ? item.audioUrl : undefined,
+      isVoice: item.isVoice === true,
+    }));
+}
+
+function getSessionMessagesStorageKey(profile: string, sessionId: string): string {
+  return `${ACTIVE_CHAT_MESSAGES_KEY_PREFIX}${profile}:${sessionId}`;
 }
 
 // ── Hook ────────────────────────────────────────────────────────
@@ -177,9 +197,6 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
-  const [model, setModel] = useState('');
-  const [provider, setProvider] = useState<ChatProvider>('codex-openai');
-  const [lmStudioModels, setLmStudioModels] = useState<ProviderModelOption[]>([]);
   const [attachments, setAttachments] = useState<ContextReferenceAttachment[]>([]);
   const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([]);
   const [uploadingImages, setUploadingImages] = useState(false);
@@ -197,14 +214,12 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
+  const provider = runtimeProvider === 'profile-default' ? undefined : runtimeProvider;
+  const model = preferredModel;
 
   // ── Computed ────────────────────────────────────────────────
   const currentSessionMeta = activeSessionId ? gateway.sessions[activeSessionId] : null;
   const currentSessionLabel = currentSessionMeta?.title || activeSessionId || null;
-  const modelOptions = useMemo(
-    () => getModelOptions(provider, preferredModel, gateway.models, lmStudioModels),
-    [provider, preferredModel, gateway.models, lmStudioModels],
-  );
   const totalResolvedChars = useMemo(
     () => resolvedAttachments.reduce((acc, item) => acc + item.charCount, 0),
     [resolvedAttachments],
@@ -226,27 +241,6 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
     );
   }, []);
 
-  useEffect(() => { setProvider(runtimeProvider); }, [runtimeProvider]);
-
-  useEffect(() => {
-    if (provider !== 'lmstudio') return;
-    apiClient.models.lmstudio()
-      .then(res => setLmStudioModels(Array.isArray(res.data?.models) ? res.data.models : []))
-      .catch(() => setLmStudioModels([]));
-  }, [provider]);
-
-  useEffect(() => {
-    if (model) return;
-    if (preferredModel) { setModel(preferredModel); return; }
-    if (modelOptions.length > 0) { setModel(modelOptions[0].value); }
-  }, [model, modelOptions, preferredModel]);
-
-  useEffect(() => {
-    if (provider === 'codex-openai') { setModel(preferredModel || ''); return; }
-    if (provider === 'nous') { setModel(preferredModel || ''); return; }
-    if (provider === 'ollama') { setModel(gateway.models[0]?.name || preferredModel || ''); return; }
-    setModel(lmStudioModels[0]?.name || preferredModel || '');
-  }, [provider, preferredModel, gateway.models, lmStudioModels]);
 
   useEffect(() => {
     const delegatedDraft = localStorage.getItem('hermes-chat-draft');
@@ -279,6 +273,18 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
       window.localStorage.removeItem(sessionStorageKey);
     }
   }, [activeSessionId, sessionStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !activeSessionId) return;
+    try {
+      window.localStorage.setItem(
+        getSessionMessagesStorageKey(currentProfile, activeSessionId),
+        JSON.stringify(messages),
+      );
+    } catch {
+      // Best-effort only.
+    }
+  }, [activeSessionId, currentProfile, messages]);
 
   // ── Effects: resolve attachments ────────────────────────────
   useEffect(() => {
@@ -396,8 +402,24 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
     setVoiceError(null);
   }, [clearPendingAttachments]);
 
+  const readPersistedMessages = useCallback((sessionId: string | null): Message[] => {
+    if (!sessionId || typeof window === 'undefined') return [];
+    try {
+      const raw = window.localStorage.getItem(getSessionMessagesStorageKey(currentProfile, sessionId));
+      if (!raw) return [];
+      return normalizePersistedMessages(JSON.parse(raw));
+    } catch {
+      return [];
+    }
+  }, [currentProfile]);
+
   const hydrateSession = useCallback(async (sessionId: string | null) => {
     if (!sessionId) { setActiveSessionId(null); setMessages([]); return; }
+    const draftMessages = readPersistedMessages(sessionId);
+    setActiveSessionId(sessionId);
+    if (draftMessages.length > 0) {
+      setMessages(draftMessages);
+    }
     try {
       const response = await apiClient.sessions.transcript(sessionId);
       const transcript = Array.isArray(response.data)
@@ -409,13 +431,13 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
               timestamp: entry.timestamp,
             }))
         : [];
-      setActiveSessionId(sessionId);
-      setMessages(transcript);
+      setMessages(draftMessages.length >= transcript.length ? draftMessages : transcript);
     } catch {
-      setActiveSessionId(sessionId);
-      setMessages([]);
+      if (draftMessages.length === 0) {
+        setMessages([]);
+      }
     }
-  }, []);
+  }, [readPersistedMessages]);
 
   const handleNewChat = useCallback(() => {
     setActiveSessionId(null);
@@ -490,7 +512,7 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
     const displayContent = imageAttachments.length > 0 ? `${enrichedInput}\n\n[Attached images: ${imageAttachments.length}]` : enrichedInput;
     const userMsg: Message = { role: 'user', content: displayContent, timestamp: Date.now() };
     const currentImages = imageAttachments;
-    const effectiveModel = model || preferredModel;
+    const effectiveModel = model;
 
     let sessionId = activeSessionId;
     if (!sessionId) {
@@ -564,7 +586,7 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
       }
       setStreaming(false);
     }
-  }, [activeSessionId, attachments.length, buildUserContent, clearPendingAttachments, imageAttachments, input, messages, model, maybeSpeakAssistantReply, preferredModel, preferredThink, provider, streaming, updateLastAssistantMessage, uploadingImages, voiceState]);
+  }, [activeSessionId, attachments.length, buildUserContent, clearPendingAttachments, imageAttachments, input, messages, model, maybeSpeakAssistantReply, preferredThink, provider, streaming, updateLastAssistantMessage, uploadingImages, voiceState]);
 
   const handleVoiceToggle = useCallback(async () => {
     if (streaming || uploadingImages || voiceState === 'processing') return;
@@ -583,7 +605,7 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
         stopMicrophoneCapture(mediaRecorderRef, mediaStreamRef);
         const blob = new Blob(recordedChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
         recordedChunksRef.current = [];
-        const effectiveModel = model || preferredModel;
+        const effectiveModel = model;
         if (blob.size === 0) { setVoiceState('idle'); return; }
         try {
           setVoiceState('processing');
@@ -609,7 +631,7 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
       setVoiceError('Microphone access denied or unavailable.');
       setVoiceState('idle');
     }
-  }, [audioRef, buildAttachedContext, clearPendingAttachments, imageAttachments, messages, model, playAudio, preferredModel, preferredThink, streaming, uploadingImages, voiceState, voiceSupported]);
+  }, [audioRef, buildAttachedContext, clearPendingAttachments, imageAttachments, messages, model, playAudio, preferredThink, streaming, uploadingImages, voiceState, voiceSupported]);
 
   // ── Voice label ─────────────────────────────────────────────
   const voiceStatusLabel = voiceState === 'recording' ? 'Recording...'
@@ -625,17 +647,17 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
   return {
     // State
     messages, activeSessionId, input, streaming, model, provider,
-    lmStudioModels, attachments, imageAttachments, uploadingImages,
+    attachments, imageAttachments, uploadingImages,
     imageError, newAttachmentKind, newAttachmentValue, resolvedAttachments,
     resolvingRefs, voiceMode, voiceState, voiceError, voiceSupported,
     // Computed
     currentSessionId: activeSessionId,
     currentSessionLabel,
-    modelOptions, totalResolvedChars, canAddReference,
+    totalResolvedChars, canAddReference,
     voiceStatusLabel, contextStatusLabel,
     preferredModel, runtimeProvider, runtimeProviderLabel,
     // Setters
-    setInput, setModel, setProvider, setVoiceMode,
+    setInput, setVoiceMode,
     setNewAttachmentKind, setNewAttachmentValue,
     // Actions
     send, handleNewChat, handleVoiceToggle,
@@ -645,3 +667,4 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
     hydrateSession,
   };
 }
+

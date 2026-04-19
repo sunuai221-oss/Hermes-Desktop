@@ -173,7 +173,7 @@ export function DelegationPage() {
                 label="Provider override"
                 value={configDraft.provider}
                 onChange={v => { setIsConfigDirty(true); setConfigDraft(c => ({ ...c, provider: v })); }}
-                placeholder="openrouter"
+                placeholder="nous"
               />
               <Field
                 label="Base URL override"
