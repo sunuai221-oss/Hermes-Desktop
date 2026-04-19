@@ -68,6 +68,9 @@ export function ChatPage({ requestedSessionId = null, requestNonce = 0 }: Props)
               onAddAttachment={chat.addAttachment}
               onRemoveAttachment={chat.removeAttachment}
               contextStatusLabel={chat.contextStatusLabel}
+              contextTokensEstimate={chat.contextTokensEstimate}
+              contextWindowTokens={chat.contextWindowTokens}
+              contextUsagePercent={chat.contextUsagePercent}
               imageAttachments={chat.imageAttachments}
               uploadingImages={chat.uploadingImages}
               imageError={chat.imageError}

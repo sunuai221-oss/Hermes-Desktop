@@ -206,6 +206,14 @@ export function ConfigPage() {
           <Field label="Default model" value={config.model?.default || ''} onChange={v => update(['model', 'default'], v)} />
           <Field label="Provider" value={config.model?.provider || ''} onChange={v => update(['model', 'provider'], v)} />
           <Field label="Base URL" value={config.model?.base_url || ''} onChange={v => update(['model', 'base_url'], v)} />
+          <Field
+            label="Context window"
+            value={String(config.model?.context_window ?? '')}
+            onChange={v => update(['model', 'context_window'], v.trim() || undefined)}
+          />
+          <p className="mt-1 text-[11px] text-muted-foreground/70">
+            Optional. Examples: <span className="font-mono">128000</span>, <span className="font-mono">128k</span>, <span className="font-mono">1m</span>. Used by the Chat page context meter.
+          </p>
         </Card>
 
         <Card className="p-6">

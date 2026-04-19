@@ -17,6 +17,16 @@ type RuntimeProvider = ChatProvider | 'profile-default';
 const MAX_IMAGES = 5;
 const ACTIVE_CHAT_SESSION_KEY_PREFIX = 'hermes_active_chat_session:';
 const ACTIVE_CHAT_MESSAGES_KEY_PREFIX = 'hermes_active_chat_messages:';
+const MESSAGE_OVERHEAD_TOKENS = 6;
+const ESTIMATED_IMAGE_TOKENS = 256;
+const CONTEXT_WINDOW_KEYS = [
+  'context_window',
+  'contextWindow',
+  'max_context_tokens',
+  'maxTokens',
+  'max_tokens',
+  'num_ctx',
+] as const;
 
 export const referenceTemplates: Array<{
   kind: ContextReferenceAttachment['kind'];
@@ -151,6 +161,101 @@ function getRuntimeProviderLabel(config: { model?: { provider?: string; base_url
   return 'Nous Research';
 }
 
+function estimateTextTokens(text: string): number {
+  const normalized = String(text || '').normalize('NFC').trim();
+  if (!normalized) return 0;
+
+  let tokens = 0;
+  let asciiRun = 0;
+  let nonAsciiRun = 0;
+
+  const flush = () => {
+    if (asciiRun > 0) {
+      tokens += Math.max(1, Math.ceil(asciiRun / 4));
+      asciiRun = 0;
+    }
+    if (nonAsciiRun > 0) {
+      tokens += nonAsciiRun;
+      nonAsciiRun = 0;
+    }
+  };
+
+  for (const char of normalized) {
+    if (/\s/.test(char)) {
+      flush();
+      continue;
+    }
+    if (char.charCodeAt(0) <= 0x7F) {
+      asciiRun += 1;
+    } else {
+      nonAsciiRun += 1;
+    }
+  }
+
+  flush();
+  return tokens;
+}
+
+function buildAttachedContextText(resolvedAttachments: ResolvedContextReference[]): string {
+  if (resolvedAttachments.length === 0) return '';
+  const blocks = resolvedAttachments.map(item => {
+    const header = `### ${item.ref}`;
+    const warning = item.warning ? `Warning: ${item.warning}\n` : '';
+    const body = item.content || '[no content extracted]';
+    return `${header}\n${warning}${body}`;
+  }).join('\n\n');
+  return `--- Attached Context ---\n\n${blocks}`;
+}
+
+function extractAttachedImageCount(text: string): number {
+  const match = String(text || '').match(/\[Attached images:\s*(\d+)\]/i);
+  return match ? Math.max(0, Number(match[1]) || 0) : 0;
+}
+
+function estimateMessageTokens(message: Message): number {
+  if (typeof message.tokenCount === 'number' && Number.isFinite(message.tokenCount) && message.tokenCount > 0) {
+    return Math.round(message.tokenCount);
+  }
+
+  const attachedImages = extractAttachedImageCount(message.content);
+  return estimateTextTokens(message.content) + MESSAGE_OVERHEAD_TOKENS + (attachedImages * ESTIMATED_IMAGE_TOKENS);
+}
+
+function parseContextWindowValue(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.round(value);
+  }
+
+  const normalized = String(value || '').trim().toLowerCase().replace(/,/g, '');
+  if (!normalized) return null;
+
+  const match = normalized.match(/^(\d+(?:\.\d+)?)([km])?$/);
+  if (!match) return null;
+
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  const unit = match[2];
+  const multiplier = unit === 'm' ? 1_000_000 : unit === 'k' ? 1_000 : 1;
+  return Math.round(amount * multiplier);
+}
+
+function inferContextWindowFromModelName(modelName: string): number | null {
+  const match = String(modelName || '').toLowerCase().match(/(?:^|[^a-z0-9])(\d+(?:\.\d+)?)([km])(?:[^a-z0-9]|$)/);
+  if (!match) return null;
+  return parseContextWindowValue(`${match[1]}${match[2]}`);
+}
+
+function getModelContextWindow(config: { model?: Record<string, unknown> } | null, modelName: string): number | null {
+  const modelConfig = config?.model;
+  if (modelConfig && typeof modelConfig === 'object') {
+    for (const key of CONTEXT_WINDOW_KEYS) {
+      const parsed = parseContextWindowValue(modelConfig[key]);
+      if (parsed) return parsed;
+    }
+  }
+  return inferContextWindowFromModelName(modelName);
+}
+
 function isMessageRole(value: unknown): value is Message['role'] {
   return value === 'user' || value === 'assistant' || value === 'system';
 }
@@ -166,6 +271,7 @@ function normalizePersistedMessages(input: unknown): Message[] {
       timestamp: typeof item.timestamp === 'number' ? item.timestamp : undefined,
       audioUrl: typeof item.audioUrl === 'string' ? item.audioUrl : undefined,
       isVoice: item.isVoice === true,
+      tokenCount: typeof item.tokenCount === 'number' ? item.tokenCount : undefined,
     }));
 }
 
@@ -191,6 +297,7 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
   const runtimeProvider = getRuntimeProviderKey(gateway.config);
   const runtimeProviderLabel = getRuntimeProviderLabel(gateway.config);
   const sessionStorageKey = `${ACTIVE_CHAT_SESSION_KEY_PREFIX}${currentProfile}`;
+  const contextWindowTokens = getModelContextWindow(gateway.config as { model?: Record<string, unknown> } | null, preferredModel);
 
   // ── State ───────────────────────────────────────────────────
   const [messages, setMessages] = useState<Message[]>([]);
@@ -230,6 +337,24 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
     }
     return Boolean(newAttachmentValue.trim());
   }, [attachments, newAttachmentKind, newAttachmentValue]);
+  const persistedContextTokens = useMemo(
+    () => messages.reduce((acc, message) => acc + estimateMessageTokens(message), 0),
+    [messages],
+  );
+  const pendingDraftTokens = useMemo(() => {
+    const hasPendingDraft = Boolean(input.trim()) || attachments.length > 0 || imageAttachments.length > 0;
+    if (!hasPendingDraft) return 0;
+    const textSeed = input.trim() || (imageAttachments.length > 0
+      ? 'Analyze the attached images.'
+      : 'Analyze the attached context references and answer from them.');
+    const attachedContext = buildAttachedContextText(resolvedAttachments);
+    const enrichedInput = attachedContext ? `${textSeed}\n\n${attachedContext}` : textSeed;
+    return estimateTextTokens(enrichedInput) + MESSAGE_OVERHEAD_TOKENS + (imageAttachments.length * ESTIMATED_IMAGE_TOKENS);
+  }, [attachments.length, imageAttachments.length, input, resolvedAttachments]);
+  const contextTokensEstimate = persistedContextTokens + pendingDraftTokens;
+  const contextUsagePercent = contextWindowTokens
+    ? Math.min(100, Math.max(0, Math.round((contextTokensEstimate / contextWindowTokens) * 100)))
+    : null;
 
   // ── Effects: init ───────────────────────────────────────────
   useEffect(() => {
@@ -331,16 +456,7 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
   }, [audioRef]);
 
   // ── Callbacks ───────────────────────────────────────────────
-  const buildAttachedContext = useCallback(() => {
-    if (resolvedAttachments.length === 0) return '';
-    const blocks = resolvedAttachments.map(item => {
-      const header = `### ${item.ref}`;
-      const warning = item.warning ? `Warning: ${item.warning}\n` : '';
-      const body = item.content || '[no content extracted]';
-      return `${header}\n${warning}${body}`;
-    }).join('\n\n');
-    return `--- Attached Context ---\n\n${blocks}`;
-  }, [resolvedAttachments]);
+  const buildAttachedContext = useCallback(() => buildAttachedContextText(resolvedAttachments), [resolvedAttachments]);
 
   const buildUserContent = useCallback((base: string) => {
     const context = buildAttachedContext();
@@ -429,6 +545,9 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
               role: entry.role,
               content: typeof entry.content === 'string' ? entry.content : String(entry.content ?? ''),
               timestamp: entry.timestamp,
+              tokenCount: typeof (entry as { token_count?: unknown }).token_count === 'number'
+                ? Number((entry as { token_count?: unknown }).token_count)
+                : undefined,
             }))
         : [];
       setMessages(draftMessages.length >= transcript.length ? draftMessages : transcript);
@@ -655,6 +774,7 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
     currentSessionLabel,
     totalResolvedChars, canAddReference,
     voiceStatusLabel, contextStatusLabel,
+    contextTokensEstimate, contextWindowTokens, contextUsagePercent,
     preferredModel, runtimeProvider, runtimeProviderLabel,
     // Setters
     setInput, setVoiceMode,

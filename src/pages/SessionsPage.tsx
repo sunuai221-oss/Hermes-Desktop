@@ -184,7 +184,7 @@ export function SessionsPage({ onNavigate, onOpenSessionInChat }: Props) {
       </div>
 
       {/* Session list */}
-      <Card className="overflow-hidden">
+      <Card className="overflow-visible">
         {!sessions ? (
           <div className="flex items-center justify-center p-16"><Loader2 size={24} className="animate-spin text-muted-foreground" /></div>
         ) : entries.length === 0 ? (
@@ -197,7 +197,14 @@ export function SessionsPage({ onNavigate, onOpenSessionInChat }: Props) {
               const isRenaming = renamingId === id;
 
               return (
-                <div key={id} className={cn('group flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/30', isRecent && 'bg-primary/[0.02]')}>
+                <div
+                  key={id}
+                  className={cn(
+                    'group relative flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/30',
+                    isRecent && 'bg-primary/[0.02]',
+                    openMenuId === id && 'z-20',
+                  )}
+                >
                   <PlatformIcon name={platform} size={15} />
 
                   <div className="flex-1 min-w-0">
@@ -225,7 +232,12 @@ export function SessionsPage({ onNavigate, onOpenSessionInChat }: Props) {
                   </span>
 
                   {/* Row actions */}
-                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div
+                    className={cn(
+                      'flex items-center gap-0.5 transition-opacity',
+                      openMenuId === id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+                    )}
+                  >
                     <button onClick={() => { onOpenSessionInChat(id); onNavigate('chat'); }} className="p-1.5 rounded text-muted-foreground hover:text-primary hover:bg-primary/5 transition-colors" title="Open">
                       <ArrowRight size={13} />
                     </button>

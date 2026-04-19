@@ -38,6 +38,9 @@ interface ChatInputProps {
   onAddAttachment: () => void;
   onRemoveAttachment: (id: string) => void;
   contextStatusLabel: string;
+  contextTokensEstimate: number;
+  contextWindowTokens: number | null;
+  contextUsagePercent: number | null;
   // Images
   imageAttachments: ImageAttachment[];
   uploadingImages: boolean;
@@ -57,6 +60,7 @@ export function ChatInput({
   input, onInputChange, onSend, onPaste, streaming,
   attachments, newAttachmentKind, newAttachmentValue, canAddReference,
   onKindChange, onValueChange, onAddAttachment, onRemoveAttachment,
+  contextStatusLabel, contextTokensEstimate, contextWindowTokens, contextUsagePercent,
   imageAttachments, uploadingImages, imageError, onRemoveImage, onFileSelect, fileInputRef,
   voiceState, voiceError, onVoiceToggle,
 }: ChatInputProps) {
@@ -66,6 +70,13 @@ export function ChatInput({
   const hasAttachments = attachments.length > 0 || imageAttachments.length > 0;
   const hasErrors = imageError || voiceError;
   const activeRef = REF_KINDS.find(r => r.kind === newAttachmentKind);
+  const contextUsageTone = contextUsagePercent == null
+    ? 'bg-primary'
+    : contextUsagePercent >= 90
+      ? 'bg-destructive'
+      : contextUsagePercent >= 75
+        ? 'bg-warning'
+        : 'bg-success';
 
   return (
     <div className="border-t border-border">
@@ -165,6 +176,36 @@ export function ChatInput({
         </div>
       )}
 
+      <div className="px-4 pt-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/50 bg-muted/25 px-3 py-2 text-[11px]">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 text-muted-foreground/80">
+            <span>
+              context est.: <span className="font-mono text-foreground/80">{formatCompactTokens(contextTokensEstimate)}</span>
+              {contextWindowTokens != null && (
+                <>
+                  {' / '}
+                  <span className="font-mono text-foreground/80">{formatCompactTokens(contextWindowTokens)}</span>
+                </>
+              )}
+            </span>
+            {contextUsagePercent != null ? (
+              <>
+                <div className="h-1.5 w-24 overflow-hidden rounded-full bg-background/70">
+                  <div
+                    className={cn('h-full rounded-full transition-[width]', contextUsageTone)}
+                    style={{ width: `${Math.min(100, Math.max(0, contextUsagePercent))}%` }}
+                  />
+                </div>
+                <span className="font-mono text-foreground/70">{contextUsagePercent}%</span>
+              </>
+            ) : (
+              <span className="text-muted-foreground/60">configure la fenêtre dans Runtime pour voir le %</span>
+            )}
+          </div>
+          <span className="text-muted-foreground/60">{contextStatusLabel}</span>
+        </div>
+      </div>
+
       {/* Main input row */}
       <div className="flex items-end gap-2 p-3">
         {/* Action buttons — left of input */}
@@ -262,6 +303,16 @@ export function ChatInput({
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
+
+function formatCompactTokens(value: number): string {
+  if (value >= 1_000_000) return `${trimTrailingZero((value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1))}M`;
+  if (value >= 1_000) return `${trimTrailingZero((value / 1_000).toFixed(value >= 100_000 ? 0 : 1))}K`;
+  return `${Math.max(0, Math.round(value))}`;
+}
+
+function trimTrailingZero(value: string): string {
+  return value.endsWith('.0') ? value.slice(0, -2) : value;
+}
 
 function refIcon(kind: ContextReferenceAttachment['kind']) {
   const r = REF_KINDS.find(x => x.kind === kind);

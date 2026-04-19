@@ -139,7 +139,14 @@ export interface CronOutputEntry {
 export type ModelThinkMode = boolean | 'low' | 'medium' | 'high';
 
 export interface HermesConfig {
-  model?: { default?: string; provider?: string; base_url?: string; api_mode?: string; think?: ModelThinkMode };
+  model?: {
+    default?: string;
+    provider?: string;
+    base_url?: string;
+    api_mode?: string;
+    think?: ModelThinkMode;
+    context_window?: number | string;
+  };
   custom_providers?: Array<{ name: string; base_url: string; api_key: string }>;
   skills?: { external_dirs?: string[] };
   memory?: {
@@ -201,6 +208,7 @@ export interface Message {
   timestamp?: number;
   audioUrl?: string;
   isVoice?: boolean;
+  tokenCount?: number;
 }
 
 export interface ImageAttachment {
