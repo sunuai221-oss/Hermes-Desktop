@@ -13,8 +13,9 @@ A local-first desktop environment for running and controlling Hermes AI agents o
 
 - A local-first control surface for Hermes on Windows.
 - An Electron shell backed by a local Express service and a React UI served over `localhost`.
-- A one-click entrypoint for gateway status, sessions, memory, configuration, hooks, skills, and automations.
+- A one-click entrypoint for gateway status, sessions, memory, configuration, hooks, skills, automations, and voice workflows.
 - A desktop workflow that keeps the Hermes runtime in WSL while keeping Windows packaging and launchers local.
+- A modular backend split into routes and services for gateway orchestration, profile resolution, runtime files, sessions, and voice.
 - A public product named `Hermes Desktop`, with a small number of legacy `builder` names preserved only for compatibility.
 
 ## Why This Exists
@@ -56,6 +57,8 @@ Optional:
 
 - A canonical WSL worktree if you prefer to keep git history and day-to-day development on ext4.
 - Browser mode if you want to inspect the same local UI without Electron.
+- A local Kokoro-compatible TTS server, such as `http://127.0.0.1:8880`, for speech synthesis.
+- `ffmpeg` if you configure Kokoro output formats other than `wav`.
 
 If you develop from a canonical WSL worktree, use Node.js 22 or newer there as well.
 
@@ -82,7 +85,7 @@ For development mode:
 start-hermes-desktop-dev.bat
 ```
 
-`start-hermes-desktop.bat` is the default entrypoint. It checks Windows dependencies, verifies the Hermes gateway in WSL, builds the UI bundle if needed, and launches Hermes Desktop in Electron.
+`start-hermes-desktop.bat` is the default entrypoint. It checks Windows dependencies, verifies the Hermes gateway in WSL using `/health`, `/v1/health`, or a TCP probe, builds the UI bundle if needed, and launches Hermes Desktop in Electron.
 
 ### Optional browser mode (legacy / compatibility)
 
@@ -116,9 +119,10 @@ The `start-builder*.bat` launchers remain available for browser-first debugging 
 At a high level, Hermes Desktop follows this flow:
 
 1. a Windows launcher loads optional local overrides and checks local dependencies
-2. the launcher verifies that the Hermes gateway in WSL is reachable and starts it if needed
+2. the launcher verifies that the Hermes gateway in WSL is reachable and starts it if needed, reusing an existing gateway process when possible
 3. Electron starts or reuses the local backend on Windows
 4. the backend serves the UI over `localhost` and manages Hermes runtime state and files
+5. voice requests use the backend pipeline for STT and Kokoro-compatible TTS
 
 ## Does Hermes Desktop depend on a web app?
 
@@ -130,20 +134,32 @@ There is no hosted frontend and no external dependency required.
 
 Some internal paths and variables still use legacy `builder` naming for compatibility. These are internal implementation details only.
 
+## Current Backend Shape
+
+The backend is no longer a single large entrypoint. `server/index.mjs` now wires together smaller route and service modules:
+
+- `server/routes/`: API route registration
+- `server/services/gateway-manager.mjs`: WSL gateway process lifecycle
+- `server/services/gateway-proxy.mjs`: gateway health, chat, provider payloads, and fallback calls
+- `server/services/path-resolver.mjs`: Windows, WSL, UNC, and gateway target path helpers
+- `server/services/profile-resolver.mjs`: Hermes home and profile path resolution
+- `server/services/voice.mjs`: voice request pipeline
+- `server/services/kokoro-tts.mjs`: Kokoro config normalization, speech shaping, FR/EN routing, and WAV concatenation
+
 ## Planned Improvements
 
-The current roadmap focuses on a small number of practical engineering upgrades:
+The current roadmap focuses on a smaller number of remaining engineering upgrades:
 
-- split `server/index.mjs` into smaller route and service modules
-- add automated smoke tests and targeted unit tests
+- add broader automated smoke tests around desktop launch and gateway health
 - harden Windows packaging and release validation over time
+- continue reducing legacy `builder` naming where compatibility allows
 
 See `docs/product-roadmap.md` for the broader direction.
 
 ## Repository Layout
 
 - `src/`: React frontend
-- `server/`: local Express backend and runtime orchestration
+- `server/`: local Express backend, route modules, runtime services, and tests
 - `electron/`: Electron entrypoints
 - `public/`: runtime static assets bundled with the UI
 - `docs/`: product, workflow, and maintenance documentation
@@ -205,6 +221,17 @@ npm run build
 npm run check
 ```
 
+## Voice And TTS
+
+Hermes Desktop uses the backend voice pipeline for microphone input and message speech playback.
+
+- STT still runs through `server/voice_tools.py` and local Python dependencies.
+- TTS is handled by a Kokoro-compatible HTTP service.
+- The Config page exposes Kokoro runtime, response format, voice routing, speech shaping, and segment gap settings.
+- Chat messages can be copied or synthesized directly from the message toolbar.
+
+Default Kokoro settings expect a local service at `http://127.0.0.1:8880` with the `/v1/audio/speech` endpoint. French and English text can be routed to separate voices before the generated WAV segments are joined.
+
 ## Known Limitations
 
 - Windows-first. Linux and macOS are not fully supported yet.
@@ -218,6 +245,7 @@ Common issues on a fresh setup:
 - `electron.exe` is missing or the launcher reports a Linux Electron binary: run `npm run setup` in the Windows working tree.
 - The backend fails with missing Node modules: run `npm run install:server` or `npm run setup`.
 - The gateway does not start from Windows: verify `HERMES_WSL_DISTRO`, `HERMES_CLI_PATH`, and that the Hermes CLI works inside WSL.
+- Kokoro speech synthesis fails: verify that the Kokoro service is running, that `tts.kokoro.runtime.base_url` points to it, and that `ffmpeg` is available when using non-`wav` output.
 - You see `builder` names in logs, config, or health routes: that is expected compatibility naming, not a second product.
 - You only want to inspect the UI in a browser: use `start-builder.bat` instead of the Electron launcher.
 
