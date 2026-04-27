@@ -24,8 +24,11 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refreshGatewayStatus = useCallback(async () => {
+    let directProbeBaseUrl: string | undefined;
+
     try {
       const { data } = await gatewayApi.processStatus();
+      directProbeBaseUrl = data.gateway_url;
       const normalizedStatus: ConnectionStatus = data.status === 'online'
         ? 'online'
         : data.pid
@@ -38,9 +41,9 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      const direct = await gatewayApi.directHealth();
+      const direct = await gatewayApi.directHealth(directProbeBaseUrl);
       if (direct.status === 'online') {
-        const parsed = new URL(gatewayApi.directBaseUrl);
+        const parsed = new URL(direct.baseUrl);
         const fallbackPort = parsed.port ? Number(parsed.port) : 8642;
         setGatewayStatus({ status: 'direct', port: fallbackPort });
         return;

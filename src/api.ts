@@ -47,21 +47,22 @@ function withProfileHeader(profileName?: string) {
   };
 }
 
-async function probeDirectGateway() {
-  const endpoints = [`${DIRECT_GATEWAY_BASE}/health`, `${DIRECT_GATEWAY_BASE}/v1/health`];
+async function probeDirectGateway(baseUrl = DIRECT_GATEWAY_BASE) {
+  const normalizedBaseUrl = String(baseUrl || DIRECT_GATEWAY_BASE).replace(/\/$/, '') || DIRECT_GATEWAY_BASE;
+  const endpoints = [`${normalizedBaseUrl}/health`, `${normalizedBaseUrl}/v1/health`];
 
   for (const endpoint of endpoints) {
     try {
       const response = await fetch(endpoint, { method: 'GET' });
       if (!response.ok) continue;
       const data = await response.json().catch(() => null);
-      return { status: 'online' as const, endpoint, baseUrl: DIRECT_GATEWAY_BASE, data };
+      return { status: 'online' as const, endpoint, baseUrl: normalizedBaseUrl, data };
     } catch {
       // Keep probing fallback endpoints.
     }
   }
 
-  return { status: 'offline' as const, endpoint: endpoints[0], baseUrl: DIRECT_GATEWAY_BASE, data: null };
+  return { status: 'offline' as const, endpoint: endpoints[0], baseUrl: normalizedBaseUrl, data: null };
 }
 
 // Inject X-Hermes-Profile header from localStorage
@@ -80,11 +81,11 @@ export const profiles = {
 
 export const gateway = {
   directBaseUrl: DIRECT_GATEWAY_BASE,
-  directHealth: () => probeDirectGateway(),
+  directHealth: (baseUrl?: string) => probeDirectGateway(baseUrl),
   backendHealth: () => http.get('/api/desktop/health'),
   health: () => http.get('/api/gateway/health'),
   state: () => http.get('/api/gateway/state'),
-  processStatus: () => http.get<{ status: 'online' | 'offline'; port?: number | null; pid?: number; gateway_state?: 'starting' | 'running' | 'stopped'; managed?: boolean; status_source?: 'managed-profile' | 'shared-global' | 'offline'; home?: string; workspace_root?: string }>('/api/gateway/process-status'),
+  processStatus: () => http.get<{ status: 'online' | 'offline'; port?: number | null; pid?: number; gateway_state?: 'starting' | 'running' | 'stopped'; managed?: boolean; status_source?: 'managed-profile' | 'shared-global' | 'offline'; gateway_url?: string; home?: string; workspace_root?: string }>('/api/gateway/process-status'),
   start: (port?: number, profileName?: string) => http.post('/api/gateway/start', { port }, withProfileHeader(profileName)),
   stop: (profileName?: string) => http.post('/api/gateway/stop', {}, withProfileHeader(profileName)),
   chat: (body: ChatRequestBody) => http.post('/api/gateway/chat', body),

@@ -24,18 +24,25 @@ export function ConfigPage() {
   }, []);
 
   const update = (path: string[], value: unknown) => {
-    if (!config) return;
-    const next = structuredClone(config);
-    let obj: NestedConfigNode = next as NestedConfigNode;
-    for (let i = 0; i < path.length - 1; i++) {
-      const current = obj[path[i]];
-      if (!current || typeof current !== 'object' || Array.isArray(current)) {
-        obj[path[i]] = {};
+    setConfig(currentConfig => {
+      if (!currentConfig) return currentConfig;
+      const next = structuredClone(currentConfig);
+      let obj: NestedConfigNode = next as NestedConfigNode;
+      for (let i = 0; i < path.length - 1; i++) {
+        const current = obj[path[i]];
+        if (!current || typeof current !== 'object' || Array.isArray(current)) {
+          obj[path[i]] = {};
+        }
+        obj = obj[path[i]] as NestedConfigNode;
       }
-      obj = obj[path[i]] as NestedConfigNode;
-    }
-    obj[path[path.length - 1]] = value;
-    setConfig(next);
+      obj[path[path.length - 1]] = value;
+      return next;
+    });
+  };
+
+  const updateTts = (path: string[], value: unknown) => {
+    update(['tts', 'provider'], 'kokoro');
+    update(['tts', ...path], value);
   };
 
   const save = async () => {
@@ -59,6 +66,11 @@ export function ConfigPage() {
       </div>
     );
   }
+
+  const kokoroRuntime = config.tts?.kokoro?.runtime ?? {};
+  const kokoroPreprocess = config.tts?.kokoro?.preprocess ?? {};
+  const kokoroRouting = config.tts?.kokoro?.routing ?? {};
+  const kokoroConcatenation = config.tts?.kokoro?.concatenation ?? {};
 
   return (
     <motion.div
@@ -350,6 +362,112 @@ export function ConfigPage() {
                 </button>
               ))}
             </div>
+          </div>
+        </Card>
+
+        <Card className="p-6">
+          <SectionTitle icon={<Zap size={16} />} title="Speech (TTS)" />
+          <div className="space-y-4">
+            <div className="rounded-xl border border-border/50 bg-muted/20 p-3">
+              <div className="text-sm font-semibold">Kokoro bilingual pipeline</div>
+              <p className="mt-1 text-[11px] text-muted-foreground/70">
+                Hermes sends all TTS requests to your local Kokoro container via
+                {' '}
+                <span className="font-mono">POST /v1/audio/speech</span>
+                , with optional speech shaping, per-segment FR/EN routing, and WAV concatenation.
+              </p>
+            </div>
+
+            <Field
+              label="Kokoro base URL"
+              value={String(kokoroRuntime.base_url || config.tts?.kokoro?.base_url || 'http://127.0.0.1:8880')}
+              onChange={v => updateTts(['kokoro', 'runtime', 'base_url'], v)}
+            />
+            <Field
+              label="Model"
+              value={String(kokoroRuntime.model || config.tts?.kokoro?.model || 'kokoro')}
+              onChange={v => updateTts(['kokoro', 'runtime', 'model'], v.trim() || 'kokoro')}
+            />
+            <Field
+              label="Speed"
+              type="number"
+              value={String(kokoroRuntime.speed ?? config.tts?.kokoro?.speed ?? 1)}
+              onChange={v => {
+                const parsed = Number.parseFloat(v);
+                updateTts(['kokoro', 'runtime', 'speed'], Number.isFinite(parsed) ? Math.min(4, Math.max(0.25, parsed)) : 1);
+              }}
+            />
+            <div>
+              <label className="mb-2 block text-xs text-muted-foreground">Response format</label>
+              <div className="flex flex-wrap gap-2">
+                {['wav', 'mp3', 'opus', 'flac'].map(format => (
+                  <button
+                    key={format}
+                    onClick={() => updateTts(['kokoro', 'runtime', 'response_format'], format)}
+                    className={cn(
+                      'rounded-lg px-3 py-1.5 text-xs font-semibold uppercase transition-all',
+                      String(kokoroRuntime.response_format || config.tts?.kokoro?.response_format || 'wav') === format
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-muted text-muted-foreground hover:bg-muted',
+                    )}
+                  >
+                    {format}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <Toggle
+              label="Speech shaping"
+              checked={kokoroPreprocess.enabled ?? true}
+              onChange={v => updateTts(['kokoro', 'preprocess', 'enabled'], v)}
+            />
+            <Field
+              label="Voice (French)"
+              value={String(kokoroRouting.voice_fr || config.tts?.kokoro?.voice_fr || 'ff_siwis')}
+              onChange={v => updateTts(['kokoro', 'routing', 'voice_fr'], v)}
+            />
+            <Field
+              label="Voice (English)"
+              value={String(kokoroRouting.voice_en || config.tts?.kokoro?.voice_en || 'af_bella')}
+              onChange={v => updateTts(['kokoro', 'routing', 'voice_en'], v)}
+            />
+            <Field
+              label="Voice (Fallback)"
+              value={String(kokoroRouting.fallback_voice || config.tts?.kokoro?.voice_multilingual || config.tts?.kokoro?.voice || 'ff_siwis')}
+              onChange={v => updateTts(['kokoro', 'routing', 'fallback_voice'], v)}
+            />
+            <Field
+              label="Volume multiplier"
+              type="number"
+              value={String(kokoroRuntime.volume_multiplier ?? config.tts?.kokoro?.volume_multiplier ?? 1)}
+              onChange={v => {
+                const parsed = Number.parseFloat(v);
+                updateTts(['kokoro', 'runtime', 'volume_multiplier'], Number.isFinite(parsed) && parsed > 0 ? parsed : 1);
+              }}
+            />
+            <Toggle
+              label="Normalize text"
+              checked={kokoroRuntime.normalize ?? config.tts?.kokoro?.normalize ?? true}
+              onChange={v => updateTts(['kokoro', 'runtime', 'normalize'], v)}
+            />
+            <Toggle
+              label="Bilingual routing (FR/EN)"
+              checked={kokoroRouting.enabled ?? config.tts?.kokoro?.auto_language ?? true}
+              onChange={v => updateTts(['kokoro', 'routing', 'enabled'], v)}
+            />
+            <Field
+              label="Gap between segments (ms)"
+              type="number"
+              value={String(kokoroConcatenation.gap_ms ?? 120)}
+              onChange={v => updateTts(['kokoro', 'concatenation', 'gap_ms'], Math.max(0, Number.parseInt(v, 10) || 0))}
+            />
+            <p className="text-[11px] text-muted-foreground/70">
+              Speech shaping improves prosody without rewriting the content. Routing sends French segments to the FR voice and English segments to the EN voice.
+            </p>
+            <p className="text-[11px] text-muted-foreground/70">
+              Example voices: <span className="font-mono">af_bella</span>, <span className="font-mono">am_michael</span>, <span className="font-mono">bf_emma</span>, <span className="font-mono">ff_siwis</span>.
+              Check <span className="font-mono">http://127.0.0.1:8880/v1/audio/voices</span> for the full list exposed by Docker.
+            </p>
           </div>
         </Card>
       </div>

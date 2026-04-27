@@ -16,7 +16,7 @@ if exist "%ROOT%\hermes-desktop.local.cmd" (
 )
 if not defined HERMES_GATEWAY_PORT set "HERMES_GATEWAY_PORT=8642"
 if not defined HERMES_DESKTOP_DEV_PORT set "HERMES_DESKTOP_DEV_PORT=3131"
-set "GATEWAY_HEALTH_URL=http://127.0.0.1:%HERMES_GATEWAY_PORT%/health"
+set "GATEWAY_BASE_URL=http://127.0.0.1:%HERMES_GATEWAY_PORT%"
 set "DESKTOP_PORT=%HERMES_DESKTOP_DEV_PORT%"
 set "DESKTOP_HEALTH_URL=http://127.0.0.1:%DESKTOP_PORT%/api/desktop/health"
 set "ELECTRON_CMD=%ROOT%\node_modules\.bin\electron.cmd"
@@ -28,11 +28,11 @@ call :ensure_desktop_deps
 if errorlevel 1 goto :missing_deps
 
 echo [1/4] Checking Hermes Gateway...
-call :check_url "%GATEWAY_HEALTH_URL%"
+call :check_gateway
 if errorlevel 1 (
   echo      Gateway offline, starting WSL2...
   start "Hermes Gateway (WSL2)" cmd /k call "%ROOT%\run-gateway-wsl.cmd"
-  call :wait_for_url "%GATEWAY_HEALTH_URL%" 30
+  call :wait_for_gateway 30
   if errorlevel 1 goto :error_gateway
 ) else (
   echo      Gateway already online.
@@ -83,17 +83,17 @@ if not "%INSTALL_EXIT%"=="0" exit /b 1
 if exist "%ELECTRON_CMD%" if exist "%ELECTRON_EXE%" exit /b 0
 exit /b 1
 
-:check_url
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; try { Invoke-WebRequest -UseBasicParsing '%~1' -TimeoutSec 3 | Out-Null; exit 0 } catch { exit 1 }"
+:check_gateway
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; $base='%GATEWAY_BASE_URL%'; $port=%HERMES_GATEWAY_PORT%; $endpoints=@($base + '/health', $base + '/v1/health'); foreach($url in $endpoints){ try { Invoke-WebRequest -UseBasicParsing $url -TimeoutSec 3 | Out-Null; exit 0 } catch {} }; try { $client = New-Object System.Net.Sockets.TcpClient; $iar = $client.BeginConnect('127.0.0.1', $port, $null, $null); if ($iar.AsyncWaitHandle.WaitOne(1500, $false) -and $client.Connected) { $client.EndConnect($iar); $client.Close(); exit 0 } $client.Close() } catch {}; exit 1"
 exit /b %ERRORLEVEL%
 
-:wait_for_url
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; $url='%~1'; for($i = 0; $i -lt %~2; $i++) { try { Invoke-WebRequest -UseBasicParsing $url -TimeoutSec 3 | Out-Null; exit 0 } catch { Start-Sleep -Seconds 1 } }; exit 1"
+:wait_for_gateway
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; $base='%GATEWAY_BASE_URL%'; $port=%HERMES_GATEWAY_PORT%; $timeout=%~1; $endpoints=@($base + '/health', $base + '/v1/health'); for($i = 0; $i -lt $timeout; $i++) { foreach($url in $endpoints){ try { Invoke-WebRequest -UseBasicParsing $url -TimeoutSec 3 | Out-Null; exit 0 } catch {} }; try { $client = New-Object System.Net.Sockets.TcpClient; $iar = $client.BeginConnect('127.0.0.1', $port, $null, $null); if ($iar.AsyncWaitHandle.WaitOne(1500, $false) -and $client.Connected) { $client.EndConnect($iar); $client.Close(); exit 0 } $client.Close() } catch {}; Start-Sleep -Seconds 1 }; exit 1"
 exit /b %ERRORLEVEL%
 
 :error_gateway
 echo.
-echo [ERROR] Hermes gateway is not responding at %GATEWAY_HEALTH_URL%.
+echo [ERROR] Hermes gateway is not responding at %GATEWAY_BASE_URL%.
 pause
 endlocal
 exit /b 1

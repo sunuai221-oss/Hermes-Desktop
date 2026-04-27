@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react';
-import { Bot, KeyRound, Mic, User } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Bot, Check, Copy, KeyRound, Loader2, Mic, User, Volume2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { Message } from '../../types';
 
@@ -9,15 +9,27 @@ interface ChatMessagesProps {
   sessionId?: string | null;
   showThinking: boolean;
   showTools: boolean;
+  speakingMessageIndex?: number | null;
+  onSpeakMessage?: (index: number, content: string) => Promise<void> | void;
 }
 
 const SCROLL_BOTTOM_THRESHOLD = 96;
 
-export function ChatMessages({ messages, streaming, sessionId = null, showThinking, showTools }: ChatMessagesProps) {
+export function ChatMessages({
+  messages,
+  streaming,
+  sessionId = null,
+  showThinking,
+  showTools,
+  speakingMessageIndex = null,
+  onSpeakMessage,
+}: ChatMessagesProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const stickToBottomRef = useRef(true);
   const previousSessionIdRef = useRef<string | null>(sessionId);
+  const copyTimerRef = useRef<number | null>(null);
+  const [copiedMessageIndex, setCopiedMessageIndex] = useState<number | null>(null);
 
   useEffect(() => {
     if (messages.length === 0) return;
@@ -42,6 +54,34 @@ export function ChatMessages({ messages, streaming, sessionId = null, showThinki
     chatEndRef.current?.scrollIntoView({ block: 'end' });
   }, [sessionId]);
 
+  useEffect(() => () => {
+    if (copyTimerRef.current != null) {
+      window.clearTimeout(copyTimerRef.current);
+    }
+  }, []);
+
+  const handleCopyMessage = useCallback(async (messageIndex: number, content: string) => {
+    const text = String(content || '').trim();
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedMessageIndex(messageIndex);
+      if (copyTimerRef.current != null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+      copyTimerRef.current = window.setTimeout(() => {
+        setCopiedMessageIndex(current => (current === messageIndex ? null : current));
+      }, 1500);
+    } catch {
+      // ignore clipboard errors silently
+    }
+  }, []);
+
+  const handleSpeakMessage = useCallback((messageIndex: number, content: string) => {
+    if (!onSpeakMessage) return;
+    void onSpeakMessage(messageIndex, content);
+  }, [onSpeakMessage]);
+
   const lastMessage = messages[messages.length - 1];
 
   useEffect(() => {
@@ -58,7 +98,7 @@ export function ChatMessages({ messages, streaming, sessionId = null, showThinki
         <div className="text-center">
           <Bot size={40} className="mx-auto mb-3 text-muted-foreground/30" />
           <p className="text-muted-foreground text-sm">Send a message, attach context, paste an image, or speak through the microphone.</p>
-          <p className="text-muted-foreground/50 text-xs mt-1">Vision multi-images + push-to-talk + Edge TTS backend.</p>
+          <p className="text-muted-foreground/50 text-xs mt-1">Vision multi-images + push-to-talk + Kokoro TTS backend.</p>
         </div>
       </div>
     );
@@ -87,20 +127,53 @@ export function ChatMessages({ messages, streaming, sessionId = null, showThinki
                 ? 'bg-primary/15 border border-primary/15 text-foreground'
                 : 'bg-muted/50 border border-border text-foreground',
             )}>
-              {message.isVoice && (
-                <div className="mb-2 inline-flex items-center gap-1 rounded-full bg-muted px-2 py-1 text-[10px] text-muted-foreground">
-                  <Mic size={10} />
-                  Voice
-                </div>
-              )}
-              <MessageContent content={message.content} showThinking={showThinking} />
-              {showTools && hasToolData(message) && <ToolCallList message={message} />}
-              {message.audioUrl && (
-                <audio controls preload="none" src={message.audioUrl} className="mt-3 w-full max-w-sm" />
-              )}
-              {streaming && index === messages.length - 1 && message.role === 'assistant' && (
-                <span className="inline-block w-2 h-4 bg-primary/60 ml-0.5 animate-pulse rounded-sm" />
-              )}
+              {(() => {
+                const isStreamingAssistant = streaming && index === messages.length - 1 && message.role === 'assistant';
+                const hasMessageText = String(message.content || '').trim().length > 0;
+                const isSpeaking = speakingMessageIndex === index;
+
+                return (
+                  <>
+                    {message.isVoice && (
+                      <div className="mb-2 inline-flex items-center gap-1 rounded-full bg-muted px-2 py-1 text-[10px] text-muted-foreground">
+                        <Mic size={10} />
+                        Voice
+                      </div>
+                    )}
+                    <MessageContent content={message.content} showThinking={showThinking} />
+                    {showTools && hasToolData(message) && <ToolCallList message={message} />}
+                    {message.audioUrl && (
+                      <audio controls preload="none" src={message.audioUrl} className="mt-3 w-full max-w-sm" />
+                    )}
+                    {hasMessageText && (
+                      <div className="mt-3 flex items-center gap-1.5">
+                        <button
+                          onClick={() => void handleCopyMessage(index, message.content)}
+                          className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-background/40 px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                          title="Copy message"
+                          aria-label="Copy message"
+                        >
+                          {copiedMessageIndex === index ? <Check size={12} /> : <Copy size={12} />}
+                          <span>{copiedMessageIndex === index ? 'Copied' : 'Copy'}</span>
+                        </button>
+                        <button
+                          onClick={() => handleSpeakMessage(index, message.content)}
+                          disabled={!onSpeakMessage || isStreamingAssistant}
+                          className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-background/40 px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
+                          title={isSpeaking ? 'Synthesizing...' : 'Speak message'}
+                          aria-label="Speak message"
+                        >
+                          {isSpeaking ? <Loader2 size={12} className="animate-spin" /> : <Volume2 size={12} />}
+                          <span>{isSpeaking ? 'Speaking...' : 'Speak'}</span>
+                        </button>
+                      </div>
+                    )}
+                    {isStreamingAssistant && (
+                      <span className="inline-block w-2 h-4 bg-primary/60 ml-0.5 animate-pulse rounded-sm" />
+                    )}
+                  </>
+                );
+              })()}
             </div>
           </div>
         ) : null

@@ -20,7 +20,7 @@ test('provider catalog uses Ollama catalogs for supported local model lookups', 
   const calls = [];
   const payload = {
     models: [
-      { name: 'qwen3.5:27b', modified_at: '2026-04-16T10:00:00Z' },
+      { name: 'Qwen3.6-27B-UD-IQ3_XXS', modified_at: '2026-04-16T10:00:00Z' },
     ],
   };
   const service = createProviderCatalogService({

@@ -42,13 +42,15 @@ test('runtime files service reads and writes config plus ensures appState storag
     await fs.access(hermes.paths.appState);
 
     await runtimeFilesService.writeYamlConfig(hermes, {
-      model: { default: 'qwen3.5:27b' },
-      tts: { edge: { voice: 'en-US-AriaNeural' } },
+      model: { default: 'Qwen3.6-27B-UD-IQ3_XXS' },
+      tts: { provider: 'kokoro', kokoro: { runtime: {}, routing: { voice_en: 'af_bella', voice_fr: 'ff_siwis' } } },
     });
 
     const config = await runtimeFilesService.readYamlConfig(hermes);
-    assert.equal(config.model.default, 'qwen3.5:27b');
-    assert.equal(config.tts.edge.voice, 'en-US-AriaNeural');
+    assert.equal(config.model.default, 'Qwen3.6-27B-UD-IQ3_XXS');
+    assert.equal(config.tts.provider, 'kokoro');
+    assert.equal(config.tts.kokoro.routing.voice_en, 'af_bella');
+    assert.equal(config.tts.kokoro.routing.voice_fr, 'ff_siwis');
   });
 });
 

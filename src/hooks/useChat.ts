@@ -347,7 +347,7 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
   const { currentProfile } = useProfiles();
 
   // ── Config ──────────────────────────────────────────────────
-  const preferredModel = gateway.config?.model?.default || 'qwen3.5:27b';
+  const preferredModel = gateway.config?.model?.default || 'Qwen3.6-27B-UD-IQ3_XXS';
   const preferredThink = gateway.config?.model?.think ?? 'low';
   const runtimeProvider = getRuntimeProviderKey(gateway.config);
   const runtimeProviderLabel = getRuntimeProviderLabel(gateway.config);
@@ -371,11 +371,13 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
   const [voiceState, setVoiceState] = useState<VoiceState>('idle');
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [voiceSupported, setVoiceSupported] = useState(false);
+  const [speakingMessageIndex, setSpeakingMessageIndex] = useState<number | null>(null);
 
   // ── Refs ────────────────────────────────────────────────────
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
+  const hydrateRequestRef = useRef(0);
   const provider = runtimeProvider === 'profile-default' ? undefined : runtimeProvider;
   const model = preferredModel;
 
@@ -530,6 +532,15 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
     });
   }, []);
 
+  const updateMessageAtIndex = useCallback((index: number, updater: (message: Message) => Message) => {
+    setMessages(current => {
+      if (index < 0 || index >= current.length) return current;
+      const copy = [...current];
+      copy[index] = updater(copy[index]);
+      return copy;
+    });
+  }, []);
+
   const playAudio = useCallback(async (audioUrl: string) => {
     const audio = audioRef.current;
     if (!audioUrl || !audio) return;
@@ -539,8 +550,13 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
     try {
       setVoiceState('speaking');
       await audio.play();
-    } catch {
-      setVoiceError('Autoplay was blocked. Use the message audio player.');
+    } catch (error) {
+      const errorName = typeof error === 'object' && error && 'name' in error ? String(error.name) : '';
+      setVoiceError(
+        errorName === 'NotAllowedError'
+          ? 'Autoplay was blocked. Use the message audio player.'
+          : 'Audio playback failed. Use the message audio player.',
+      );
       setVoiceState('idle');
     }
   }, [audioRef]);
@@ -558,6 +574,25 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
       setVoiceState('idle');
     }
   }, [playAudio, updateLastAssistantMessage, voiceMode]);
+
+  const speakMessageAt = useCallback(async (messageIndex: number, rawText: string) => {
+    const text = String(rawText || '').trim();
+    if (!text) return;
+    if (voiceState === 'recording' || voiceState === 'processing') return;
+    try {
+      setVoiceError(null);
+      setVoiceState('processing');
+      setSpeakingMessageIndex(messageIndex);
+      const response = await apiClient.voice.synthesize(text);
+      updateMessageAtIndex(messageIndex, message => ({ ...message, audioUrl: response.data.audioUrl }));
+      await playAudio(response.data.audioUrl);
+    } catch {
+      setVoiceError('Speech synthesis unavailable.');
+      setVoiceState('idle');
+    } finally {
+      setSpeakingMessageIndex(current => (current === messageIndex ? null : current));
+    }
+  }, [playAudio, updateMessageAtIndex, voiceState]);
 
   const clearPendingAttachments = useCallback(() => {
     setAttachments([]);
@@ -585,6 +620,7 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
   }, [currentProfile]);
 
   const hydrateSession = useCallback(async (sessionId: string | null) => {
+    const requestId = ++hydrateRequestRef.current;
     if (!sessionId) { setActiveSessionId(null); setMessages([]); return; }
     const draftMessages = readPersistedMessages(sessionId);
     setActiveSessionId(sessionId);
@@ -593,6 +629,7 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
     }
     try {
       const response = await apiClient.sessions.transcript(sessionId);
+      if (hydrateRequestRef.current !== requestId) return;
       const transcript = Array.isArray(response.data)
         ? response.data
             .filter((entry): entry is Message => entry?.role === 'user' || entry?.role === 'assistant' || entry?.role === 'system')
@@ -612,8 +649,9 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
                 : undefined,
             }))
         : [];
-      setMessages(draftMessages.length >= transcript.length ? draftMessages : transcript);
+      setMessages(transcript.length > 0 ? transcript : draftMessages);
     } catch {
+      if (hydrateRequestRef.current !== requestId) return;
       if (draftMessages.length === 0) {
         setMessages([]);
       }
@@ -698,7 +736,7 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
     let sessionId = activeSessionId;
     if (!sessionId) {
       try {
-        const created = await apiClient.sessions.create({ source: 'api-server', title: 'Hermes Desktop chat session', model: effectiveModel });
+        const created = await apiClient.sessions.create({ source: 'api-server', model: effectiveModel });
         sessionId = created.data?.id || null;
         if (sessionId) setActiveSessionId(sessionId);
       } catch { sessionId = null; }
@@ -829,7 +867,7 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
           await playAudio(response.data.audioUrl);
         } catch (error) {
           console.error(error);
-          setVoiceError('Voice pipeline failed. Check STT, Edge TTS, and the gateway.');
+          setVoiceError('Voice pipeline failed. Check STT, Kokoro TTS, and the gateway.');
           setVoiceState('idle');
         }
       });
@@ -860,7 +898,7 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
     messages, activeSessionId, input, streaming, model, provider,
     attachments, imageAttachments, uploadingImages,
     imageError, newAttachmentKind, newAttachmentValue, resolvedAttachments,
-    resolvingRefs, voiceMode, voiceState, voiceError, voiceSupported,
+    resolvingRefs, voiceMode, voiceState, voiceError, voiceSupported, speakingMessageIndex,
     // Computed
     currentSessionId: activeSessionId,
     currentSessionLabel,
@@ -873,10 +911,10 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
     setNewAttachmentKind, setNewAttachmentValue,
     // Actions
     send, handleNewChat, handleVoiceToggle,
+    speakMessageAt,
     addAttachment, removeAttachment,
     attachImageFiles, removeImage,
     handlePaste, handleFileSelection,
     hydrateSession,
   };
 }
-

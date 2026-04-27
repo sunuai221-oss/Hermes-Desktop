@@ -1,7 +1,5 @@
-import asyncio
 import json
 import sys
-from pathlib import Path
 
 
 def emit(payload: dict) -> None:
@@ -49,34 +47,6 @@ def transcribe_audio(payload: dict) -> None:
         emit_error(str(exc))
 
 
-async def synthesize_edge(payload: dict) -> None:
-    try:
-        import edge_tts
-    except Exception as exc:  # pragma: no cover - runtime dependency
-        emit_error(f"edge_tts unavailable: {exc}")
-        return
-
-    text = str(payload.get("text") or "").strip()
-    output_path = payload.get("output_path")
-    if not text:
-        emit_error("text is required")
-        return
-    if not output_path:
-        emit_error("output_path is required")
-        return
-
-    voice = payload.get("voice") or "en-US-AriaNeural"
-    rate = payload.get("rate") or "+0%"
-
-    try:
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        communicate = edge_tts.Communicate(text=text, voice=voice, rate=rate)
-        await communicate.save(output_path)
-        emit({"ok": True, "output_path": output_path, "voice": voice})
-    except Exception as exc:  # pragma: no cover - runtime dependency
-        emit_error(str(exc))
-
-
 def main() -> None:
     try:
         if len(sys.argv) > 1:
@@ -91,9 +61,6 @@ def main() -> None:
     action = payload.get("action")
     if action == "transcribe":
         transcribe_audio(payload)
-        return
-    if action == "synthesize":
-        asyncio.run(synthesize_edge(payload))
         return
 
     emit_error(f"unsupported action: {action}")

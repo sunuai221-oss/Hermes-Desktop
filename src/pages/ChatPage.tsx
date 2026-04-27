@@ -79,6 +79,8 @@ export function ChatPage({ requestedSessionId = null, requestNonce = 0 }: Props)
               sessionId={chat.activeSessionId}
               showThinking={showThinking}
               showTools={showTools}
+              speakingMessageIndex={chat.speakingMessageIndex}
+              onSpeakMessage={chat.speakMessageAt}
             />
 
             <ChatInput

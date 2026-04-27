@@ -25,6 +25,7 @@ export interface GatewayProcessStatus {
   gateway_state?: 'starting' | 'running' | 'stopped';
   managed?: boolean;
   status_source?: 'managed-profile' | 'shared-global' | 'offline';
+  gateway_url?: string;
   home?: string;
   workspace_root?: string;
 }
@@ -173,6 +174,57 @@ export interface HermesConfig {
   streaming?: { enabled?: boolean; transport?: string; edit_interval?: number; buffer_threshold?: number; cursor?: string };
   display?: { tool_progress?: string; background_process_notifications?: string };
   stt?: { enabled?: boolean };
+  tts?: {
+    mode?: 'kokoro' | string;
+    provider?: 'kokoro' | string;
+    kokoro?: {
+      runtime?: {
+        base_url?: string;
+        model?: string;
+        speed?: number;
+        response_format?: 'wav' | 'mp3' | 'opus' | 'flac' | 'pcm' | string;
+        lang_code?: string;
+        normalize?: boolean;
+        volume_multiplier?: number;
+      };
+      preprocess?: {
+        enabled?: boolean;
+        mode?: string;
+        normalize_whitespace?: boolean;
+        restore_basic_punctuation?: boolean;
+        split_flat_long_sentences?: boolean;
+        preserve_meaning?: boolean;
+      };
+      routing?: {
+        enabled?: boolean;
+        strategy?: string;
+        detect_language?: string;
+        voice_fr?: string;
+        voice_en?: string;
+        fallback_voice?: string;
+        uncertain_language_policy?: string;
+      };
+      concatenation?: {
+        enabled?: boolean;
+        gap_ms?: number;
+        trim_segment_edges?: boolean;
+        skip_concat_when_single_segment?: boolean;
+      };
+      // Legacy aliases still read by the backend.
+      base_url?: string;
+      model?: string;
+      voice?: string;
+      speed?: number;
+      response_format?: 'wav' | 'mp3' | 'opus' | 'flac' | 'pcm' | string;
+      auto_language?: boolean;
+      lang_code?: string;
+      voice_en?: string;
+      voice_fr?: string;
+      voice_multilingual?: string;
+      normalize?: boolean;
+      volume_multiplier?: number;
+    };
+  };
   terminal?: {
     backend?: string;
     cwd?: string;

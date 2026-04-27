@@ -33,3 +33,10 @@ hermes-desktop.local.cmd
 *.njsproj
 *.sln
 *.sw?
+
+# Local session and backup artifacts
+CONTEXT.md
+ROADMAP.md
+*.bak
+*.backup
+*.fixed

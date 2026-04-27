@@ -17,6 +17,7 @@ export function useGateway(interval = 4000): GatewayHook {
   const [state, setState] = useState<GatewayState | null>(null);
   const [health, setHealth] = useState<ConnectionStatus>('connecting');
   const [directGatewayHealth, setDirectGatewayHealth] = useState<ConnectionStatus>('connecting');
+  const [directGatewayUrl, setDirectGatewayUrl] = useState(api.gateway.directBaseUrl);
   const [processStatus, setProcessStatus] = useState<GatewayProcessStatus | null>(null);
   const [ollamaStatus, setOllamaStatus] = useState<ConnectionStatus>('connecting');
   const [models, setModels] = useState<OllamaModel[]>([]);
@@ -26,18 +27,22 @@ export function useGateway(interval = 4000): GatewayHook {
   const [hooks, setHooks] = useState<HookInfo[]>([]);
   const [isLoadingMeta, setIsLoadingMeta] = useState(true);
 
-  const probeDirectGateway = useCallback(async () => {
+  const probeDirectGateway = useCallback(async (baseUrl?: string) => {
     try {
-      const result = await api.gateway.directHealth();
+      const result = await api.gateway.directHealth(baseUrl);
+      setDirectGatewayUrl(result.baseUrl);
       setDirectGatewayHealth(result.status);
       return result.status;
     } catch {
+      setDirectGatewayUrl(baseUrl || api.gateway.directBaseUrl);
       setDirectGatewayHealth('offline');
       return 'offline' as const;
     }
   }, []);
 
   const poll = useCallback(async () => {
+    let nextProcessStatus: GatewayProcessStatus | null = null;
+
     try {
       await api.gateway.backendHealth();
       setBuilderStatus('online');
@@ -54,7 +59,7 @@ export function useGateway(interval = 4000): GatewayHook {
 
     try {
       const res = await api.gateway.processStatus();
-      const nextProcessStatus = {
+      nextProcessStatus = {
         ...res.data,
         status: res.data.status === 'online'
           ? 'online'
@@ -63,6 +68,9 @@ export function useGateway(interval = 4000): GatewayHook {
             : 'offline',
       } as GatewayProcessStatus;
       setProcessStatus(nextProcessStatus);
+      if (nextProcessStatus.gateway_url) {
+        setDirectGatewayUrl(nextProcessStatus.gateway_url);
+      }
     } catch {
       setProcessStatus(null);
     }
@@ -72,7 +80,7 @@ export function useGateway(interval = 4000): GatewayHook {
       setHealth('online');
       setDirectGatewayHealth('connecting');
     } catch {
-      const directStatus = await probeDirectGateway();
+      const directStatus = await probeDirectGateway(nextProcessStatus?.gateway_url);
       if (directStatus === 'online') {
         setHealth('direct');
       } else {
@@ -131,7 +139,7 @@ export function useGateway(interval = 4000): GatewayHook {
     state,
     health,
     directGatewayHealth,
-    directGatewayUrl: api.gateway.directBaseUrl,
+    directGatewayUrl,
     processStatus,
     ollamaStatus,
     models,

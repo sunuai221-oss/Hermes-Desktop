@@ -58,14 +58,35 @@ export function registerGatewayRoutes({
 
     try {
       const target = getProviderRequestConfig(req.hermes, req.body);
-      const response = await axios.post(
-        target.endpoint,
-        { ...target.payload, stream: true },
-        {
-          responseType: 'stream',
-          headers: target.headers,
+      let response;
+      try {
+        response = await axios.post(
+          target.endpoint,
+          { ...target.payload, stream: true },
+          {
+            responseType: 'stream',
+            headers: target.headers,
+          }
+        );
+      } catch (error) {
+        const isConnRefused = Boolean(
+          error?.code === 'ECONNREFUSED'
+          || error?.cause?.code === 'ECONNREFUSED'
+          || /ECONNREFUSED/i.test(String(error?.message || ''))
+        );
+        if (!target.fallbackEndpoint || !isConnRefused) {
+          throw error;
         }
-      );
+
+        response = await axios.post(
+          target.fallbackEndpoint,
+          { ...target.payload, stream: true },
+          {
+            responseType: 'stream',
+            headers: target.headers,
+          }
+        );
+      }
 
       response.data.on('data', chunk => res.write(chunk));
       response.data.on('end', () => res.end());
