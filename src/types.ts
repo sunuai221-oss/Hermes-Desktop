@@ -266,6 +266,15 @@ export interface ChatToolCall {
   [key: string]: unknown;
 }
 
+export interface ChatUsage {
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  totalTokens?: number | null;
+  cost?: number | null;
+  rateLimitRemaining?: number | null;
+  rateLimitReset?: number | string | null;
+}
+
 export interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;

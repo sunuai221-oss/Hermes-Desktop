@@ -298,7 +298,7 @@ app.get('/api/profiles/metadata', async (req, res) => {
         config = yaml.parse(configData);
       } catch {}
 
-      const procStatus = await resolveGatewayProcessStatus(context);
+      const procStatus = await resolveGatewayProcessStatus(context, gatewayManager);
 
       results.push({
         name,
@@ -556,9 +556,84 @@ app.post('/api/voice/synthesize', async (req, res) => {
 
 // ── Context Files Routes ────────────────────────────────────────────
 
+// Delete generated TTS files once playback is complete on the client.
+app.delete('/api/voice/audio/:fileName', async (req, res) => {
+  try {
+    const requestedFileName = String(req.params?.fileName || '').trim();
+    const fileName = path.basename(requestedFileName);
+    if (!fileName || fileName !== requestedFileName) {
+      return res.status(400).json({ error: 'Invalid audio file name' });
+    }
+
+    const voiceDir = path.resolve(req.hermes.paths.voice);
+    const targetPath = path.resolve(voiceDir, fileName);
+    const relativePath = path.relative(voiceDir, targetPath);
+    if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+      return res.status(400).json({ error: 'Invalid audio file path' });
+    }
+
+    await fs.unlink(targetPath).catch((error) => {
+      if (error?.code === 'ENOENT') return;
+      throw error;
+    });
+    res.status(204).end();
+  } catch (error) {
+    res.status(500).json({ error: 'Could not delete voice audio', details: error.message });
+  }
+});
+
 const STARTUP_CONTEXT_FILES = ['.hermes.md', 'HERMES.md', 'AGENTS.md', 'CLAUDE.md', '.cursorrules'];
 const NESTED_CONTEXT_FILES = ['AGENTS.md', 'CLAUDE.md', '.cursorrules'];
 const MAX_CONTEXT_PREVIEW = 8000;
+const CONTEXT_SCAN_MAX_DEPTH = Math.max(1, Number(process.env.HERMES_CONTEXT_SCAN_MAX_DEPTH || 5));
+const CONTEXT_FILES_CACHE_TTL_MS = Math.max(0, Number(process.env.HERMES_CONTEXT_FILES_CACHE_TTL_MS || 30000));
+const CONTEXT_SCAN_EXCLUDED_DIRS = new Set([
+  '.cache',
+  '.git',
+  '.next',
+  '.pnpm-store',
+  '.turbo',
+  '.venv',
+  '__pycache__',
+  'build',
+  'dist',
+  'node_modules',
+  'release',
+  'site-packages',
+  'venv',
+]);
+const contextFilesCache = new Map();
+
+function getContextFilesCacheKey(hermes) {
+  return `${hermes?.profile || 'default'}:${WORKSPACE_ROOT}`;
+}
+
+function readContextFilesCache(cacheKey) {
+  if (CONTEXT_FILES_CACHE_TTL_MS <= 0) return null;
+  const cached = contextFilesCache.get(cacheKey);
+  if (!cached) return null;
+  if (Date.now() > cached.expiresAt) {
+    contextFilesCache.delete(cacheKey);
+    return null;
+  }
+  return cached.value;
+}
+
+function writeContextFilesCache(cacheKey, value) {
+  if (CONTEXT_FILES_CACHE_TTL_MS <= 0) return;
+  contextFilesCache.set(cacheKey, {
+    value,
+    expiresAt: Date.now() + CONTEXT_FILES_CACHE_TTL_MS,
+  });
+}
+
+function clearContextFilesCache(cacheKey) {
+  if (cacheKey) {
+    contextFilesCache.delete(cacheKey);
+    return;
+  }
+  contextFilesCache.clear();
+}
 
 async function scanContextFile(filePath, kind, extra = {}) {
   try {
@@ -580,7 +655,14 @@ async function scanContextFile(filePath, kind, extra = {}) {
   }
 }
 
-async function listContextFiles(hermes) {
+async function listContextFiles(hermes, options = {}) {
+  const force = options?.force === true;
+  const cacheKey = getContextFilesCacheKey(hermes);
+  if (!force) {
+    const cached = readContextFilesCache(cacheKey);
+    if (cached) return cached;
+  }
+
   const startupCandidates = [];
   let startupWinner = null;
 
@@ -607,14 +689,16 @@ async function listContextFiles(hermes) {
   const cursorModules = [];
 
   async function walk(dir, depth = 0) {
-    if (depth > 5) return;
+    if (depth > CONTEXT_SCAN_MAX_DEPTH) return;
     const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
-      if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name === '.git') continue;
+      const entryName = String(entry.name || '');
+      const lowerName = entryName.toLowerCase();
+      if (entry.isDirectory() && CONTEXT_SCAN_EXCLUDED_DIRS.has(lowerName)) continue;
       const fullPath = path.join(dir, entry.name);
 
       if (entry.isDirectory()) {
-        if (entry.name === '.cursor') {
+        if (entryName === '.cursor') {
           const rulesDir = path.join(fullPath, 'rules');
           const rulesEntries = await fs.readdir(rulesDir, { withFileTypes: true }).catch(() => []);
           for (const rule of rulesEntries) {
@@ -638,7 +722,7 @@ async function listContextFiles(hermes) {
 
   await walk(WORKSPACE_ROOT);
 
-  return {
+  const inventory = {
     workspaceRoot: WORKSPACE_ROOT,
     startupWinner,
     startupCandidates,
@@ -646,11 +730,14 @@ async function listContextFiles(hermes) {
     cursorModules,
     soul,
   };
+  writeContextFilesCache(cacheKey, inventory);
+  return inventory;
 }
 
 app.get('/api/context-files', async (req, res) => {
   try {
-    res.json(await listContextFiles(req.hermes));
+    const force = String(req.query?.refresh || '') === '1';
+    res.json(await listContextFiles(req.hermes, { force }));
   } catch (error) {
     res.status(500).json({ error: 'Could not scan context files', details: error.message });
   }
@@ -660,7 +747,7 @@ app.post('/api/context-files', async (req, res) => {
   try {
     const targetPath = String(req.body?.path || '');
     const content = typeof req.body?.content === 'string' ? req.body.content : '';
-    const inventory = await listContextFiles(req.hermes);
+    const inventory = await listContextFiles(req.hermes, { force: true });
     const allowed = new Set([
       ...inventory.startupCandidates.map(item => item.path),
       ...inventory.nestedCandidates.map(item => item.path),
@@ -673,6 +760,7 @@ app.post('/api/context-files', async (req, res) => {
     }
 
     await fs.writeFile(targetPath, content, 'utf-8');
+    clearContextFilesCache(getContextFilesCacheKey(req.hermes));
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: 'Could not write context file', details: error.message });

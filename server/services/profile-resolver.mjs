@@ -25,6 +25,7 @@ function getHermesHomeScore(candidatePath) {
   try {
     const resolved = path.resolve(candidatePath);
     let score = 0;
+    if (fsSync.existsSync(path.join(resolved, 'profiles'))) score += 8;
     if (fsSync.existsSync(path.join(resolved, 'sessions'))) score += 10;
     if (fsSync.existsSync(path.join(resolved, 'gateway_state.json'))) score += 5;
     if (fsSync.existsSync(path.join(resolved, 'SOUL.md'))) score += 3;

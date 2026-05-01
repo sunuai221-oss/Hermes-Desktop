@@ -100,8 +100,33 @@ Available commands:
 
 - `npm run desktop`
 - `npm run desktop:dev`
+- `npm run desktop:smoke`
 - `npm run desktop:pack`
 - `npm run desktop:build`
+
+Packaging prerequisites:
+
+- run from a Windows shell (not inside WSL)
+- install dependencies with `npm run setup` (or `npm install` + `npm run install:server`)
+- keep `start-hermes-desktop.bat` as the canonical local/dev launcher
+
+Installer outputs:
+
+- unpacked app: `release/win-unpacked/` (`npm run desktop:pack`)
+- NSIS installer: `release/Hermes-Desktop-<version>-<arch>.exe` (`npm run desktop:build`)
+
+Smoke validation:
+
+```powershell
+npm run desktop:smoke
+```
+
+This checks:
+
+- Windows Electron binary presence (and detects Linux/WSL Electron mismatch)
+- configured WSL distro availability
+- gateway health on `http://127.0.0.1:8642`
+- backend health on `http://127.0.0.1:3130/api/desktop/health`
 
 Notes:
 

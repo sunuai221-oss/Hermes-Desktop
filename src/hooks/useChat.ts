@@ -5,11 +5,17 @@ import { useGatewayContext } from '../contexts/GatewayContext';
 import * as apiClient from '../api';
 import type {
   ChatToolCall,
+  ChatUsage,
   ContextReferenceAttachment,
   ImageAttachment,
   Message,
   ResolvedContextReference,
 } from '../types';
+import {
+  normalizeGatewayUsage,
+  normalizeToolCallDeltas,
+  parseSseChunk,
+} from '../lib/sseParser';
 
 type VoiceState = 'idle' | 'recording' | 'processing' | 'speaking';
 export type ChatProvider = 'codex-openai' | 'custom' | 'ollama' | 'nous';
@@ -40,6 +46,25 @@ export const referenceTemplates: Array<{
   { kind: 'staged', label: '@staged', placeholder: '' },
   { kind: 'git', label: '@git', placeholder: '5' },
   { kind: 'url', label: '@url', placeholder: 'https://example.com' },
+];
+
+export type ChatCommandId = 'new' | 'usage' | 'status' | 'compact' | 'tools' | 'memory' | 'model';
+
+export interface ChatCommandDefinition {
+  id: ChatCommandId;
+  command: `/${ChatCommandId}`;
+  description: string;
+  localOnly: boolean;
+}
+
+export const CHAT_COMMANDS: ChatCommandDefinition[] = [
+  { id: 'new', command: '/new', description: 'Start a fresh chat session', localOnly: true },
+  { id: 'usage', command: '/usage', description: 'Show latest token, cost, and limit usage', localOnly: true },
+  { id: 'status', command: '/status', description: 'Show backend, gateway, profile, and model status', localOnly: true },
+  { id: 'compact', command: '/compact', description: 'Ask Hermes runtime to compact the session context', localOnly: false },
+  { id: 'tools', command: '/tools', description: 'Ask Hermes runtime to inspect enabled tools', localOnly: false },
+  { id: 'memory', command: '/memory', description: 'Ask Hermes runtime to inspect memory state', localOnly: false },
+  { id: 'model', command: '/model', description: 'Ask Hermes runtime to inspect/switch model behavior', localOnly: false },
 ];
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -88,6 +113,19 @@ async function readBlobAsDataUrl(blob: Blob): Promise<string> {
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
+}
+
+function extractVoiceAudioFileName(audioUrl: string): string | null {
+  const normalized = String(audioUrl || '').trim();
+  if (!normalized) return null;
+  try {
+    const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1';
+    const url = new URL(normalized, baseUrl);
+    const match = url.pathname.match(/\/api\/voice\/audio\/([^/]+)$/);
+    return match?.[1] ? decodeURIComponent(match[1]) : null;
+  } catch {
+    return null;
+  }
 }
 
 async function convertDataUrlToPng(dataUrl: string): Promise<{ dataUrl: string; width: number; height: number }> {
@@ -330,6 +368,60 @@ function normalizePersistedMessages(input: unknown): Message[] {
     }));
 }
 
+function parseCommandInput(input: string): { id: ChatCommandId; command: string; args: string } | null {
+  const trimmed = String(input || '').trim();
+  if (!trimmed.startsWith('/')) return null;
+  const [commandToken, ...argsTokens] = trimmed.split(/\s+/);
+  const id = commandToken.slice(1).toLowerCase() as ChatCommandId;
+  if (!CHAT_COMMANDS.some(item => item.id === id)) return null;
+  return { id, command: commandToken, args: argsTokens.join(' ') };
+}
+
+function isLocalCommand(commandId: ChatCommandId): boolean {
+  return commandId === 'new' || commandId === 'usage' || commandId === 'status';
+}
+
+function formatUsageStatus(usage: ChatUsage | null): string {
+  if (!usage) return 'Usage unavailable for this session.';
+
+  const tokens = [
+    `prompt ${formatIntegerMetric(usage.promptTokens)}`,
+    `completion ${formatIntegerMetric(usage.completionTokens)}`,
+    `total ${formatIntegerMetric(usage.totalTokens)}`,
+  ].join(' | ');
+
+  const extras: string[] = [];
+  if (typeof usage.cost === 'number' && Number.isFinite(usage.cost)) {
+    extras.push(`cost $${usage.cost.toFixed(6)}`);
+  }
+  if (usage.rateLimitRemaining != null) {
+    extras.push(`rate limit remaining ${formatIntegerMetric(usage.rateLimitRemaining)}`);
+  }
+  if (usage.rateLimitReset != null) {
+    extras.push(`rate limit reset ${String(usage.rateLimitReset)}`);
+  }
+
+  return extras.length > 0 ? `${tokens}\n${extras.join(' | ')}` : tokens;
+}
+
+function formatIntegerMetric(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return 'n/a';
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value);
+}
+
+function mergeUsage(current: ChatUsage | null, incoming: ChatUsage | null): ChatUsage | null {
+  if (!incoming) return current;
+  if (!current) return incoming;
+  return {
+    promptTokens: incoming.promptTokens ?? current.promptTokens ?? null,
+    completionTokens: incoming.completionTokens ?? current.completionTokens ?? null,
+    totalTokens: incoming.totalTokens ?? current.totalTokens ?? null,
+    cost: incoming.cost ?? current.cost ?? null,
+    rateLimitRemaining: incoming.rateLimitRemaining ?? current.rateLimitRemaining ?? null,
+    rateLimitReset: incoming.rateLimitReset ?? current.rateLimitReset ?? null,
+  };
+}
+
 function getSessionMessagesStorageKey(profile: string, sessionId: string): string {
   return `${ACTIVE_CHAT_MESSAGES_KEY_PREFIX}${profile}:${sessionId}`;
 }
@@ -342,7 +434,11 @@ interface UseChatOptions {
   audioRef: RefObject<HTMLAudioElement | null>;
 }
 
-export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef }: UseChatOptions) {
+export function useChat({
+  requestedSessionId = null,
+  requestNonce = 0,
+  audioRef,
+}: UseChatOptions) {
   const gateway = useGatewayContext();
   const { currentProfile } = useProfiles();
 
@@ -359,6 +455,7 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
+  const [usage, setUsage] = useState<ChatUsage | null>(null);
   const [attachments, setAttachments] = useState<ContextReferenceAttachment[]>([]);
   const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([]);
   const [uploadingImages, setUploadingImages] = useState(false);
@@ -504,13 +601,6 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
   }, [attachments]);
 
   // ── Effects: audio ended ────────────────────────────────────
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    const handler = () => setVoiceState('idle');
-    audio.addEventListener('ended', handler);
-    return () => audio.removeEventListener('ended', handler);
-  }, [audioRef]);
 
   // ── Callbacks ───────────────────────────────────────────────
   const buildAttachedContext = useCallback(() => buildAttachedContextText(resolvedAttachments), [resolvedAttachments]);
@@ -541,6 +631,33 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
     });
   }, []);
 
+  const clearAudioUrl = useCallback((audioUrl: string) => {
+    const normalized = String(audioUrl || '').trim();
+    if (!normalized) return;
+    setMessages(current => {
+      let changed = false;
+      const next = current.map(message => {
+        if (message.audioUrl !== normalized) return message;
+        changed = true;
+        return { ...message, audioUrl: undefined };
+      });
+      return changed ? next : current;
+    });
+  }, []);
+
+  const releaseAudioUrl = useCallback(async (audioUrl: string) => {
+    const normalized = String(audioUrl || '').trim();
+    if (!normalized) return;
+    clearAudioUrl(normalized);
+    const fileName = extractVoiceAudioFileName(normalized);
+    if (!fileName) return;
+    try {
+      await apiClient.voice.deleteAudio(fileName);
+    } catch {
+      // Keep UI responsive even if cleanup fails server-side.
+    }
+  }, [clearAudioUrl]);
+
   const playAudio = useCallback(async (audioUrl: string) => {
     const audio = audioRef.current;
     if (!audioUrl || !audio) return;
@@ -561,6 +678,22 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
     }
   }, [audioRef]);
 
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const handler = () => {
+      const finishedAudioUrl = String(audio.currentSrc || audio.src || '').trim();
+      setVoiceState('idle');
+      audio.removeAttribute('src');
+      audio.load();
+      if (finishedAudioUrl) {
+        void releaseAudioUrl(finishedAudioUrl);
+      }
+    };
+    audio.addEventListener('ended', handler);
+    return () => audio.removeEventListener('ended', handler);
+  }, [audioRef, releaseAudioUrl]);
+
   const maybeSpeakAssistantReply = useCallback(async (assistantText: string) => {
     if (!voiceMode || !assistantText.trim()) return;
     try {
@@ -579,6 +712,17 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
     const text = String(rawText || '').trim();
     if (!text) return;
     if (voiceState === 'recording' || voiceState === 'processing') return;
+    const cachedAudioUrl = messages[messageIndex]?.audioUrl;
+    if (cachedAudioUrl) {
+      try {
+        setVoiceError(null);
+        setSpeakingMessageIndex(messageIndex);
+        await playAudio(cachedAudioUrl);
+      } finally {
+        setSpeakingMessageIndex(current => (current === messageIndex ? null : current));
+      }
+      return;
+    }
     try {
       setVoiceError(null);
       setVoiceState('processing');
@@ -592,7 +736,11 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
     } finally {
       setSpeakingMessageIndex(current => (current === messageIndex ? null : current));
     }
-  }, [playAudio, updateMessageAtIndex, voiceState]);
+  }, [messages, playAudio, updateMessageAtIndex, voiceState]);
+
+  const handleMessageAudioEnded = useCallback((audioUrl: string) => {
+    void releaseAudioUrl(audioUrl);
+  }, [releaseAudioUrl]);
 
   const clearPendingAttachments = useCallback(() => {
     setAttachments([]);
@@ -621,9 +769,10 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
 
   const hydrateSession = useCallback(async (sessionId: string | null) => {
     const requestId = ++hydrateRequestRef.current;
-    if (!sessionId) { setActiveSessionId(null); setMessages([]); return; }
+    if (!sessionId) { setActiveSessionId(null); setMessages([]); setUsage(null); return; }
     const draftMessages = readPersistedMessages(sessionId);
     setActiveSessionId(sessionId);
+    setUsage(null);
     if (draftMessages.length > 0) {
       setMessages(draftMessages);
     }
@@ -661,6 +810,7 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
   const handleNewChat = useCallback(() => {
     setActiveSessionId(null);
     setMessages([]);
+    setUsage(null);
     resetComposer();
     if (typeof window !== 'undefined') {
       window.localStorage.removeItem(sessionStorageKey);
@@ -723,12 +873,67 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
     event.target.value = '';
   }, [attachImageFiles]);
 
-  const send = useCallback(async () => {
-    if ((!input.trim() && attachments.length === 0 && imageAttachments.length === 0) || streaming || uploadingImages || voiceState === 'recording' || voiceState === 'processing') return;
+  const appendLocalAssistantMessage = useCallback((content: string) => {
+    if (!content.trim()) return;
+    setMessages(current => [...current, { role: 'assistant', content, timestamp: Date.now() }]);
+  }, []);
 
-    const textSeed = input.trim() || (imageAttachments.length > 0 ? 'Analyze the attached images.' : 'Analyze the attached context references and answer from them.');
+  const formatStatusMessage = useCallback(() => {
+    const backend = gateway.builderStatus;
+    const gatewayRuntime = gateway.health;
+    const directGateway = gateway.directGatewayHealth;
+    const processStatus = gateway.processStatus?.status || 'unknown';
+    const processPort = gateway.processStatus?.port ?? 'n/a';
+    const session = activeSessionId || 'none';
+
+    return [
+      `profile ${currentProfile}`,
+      `backend ${backend}`,
+      `gateway ${gatewayRuntime}`,
+      `direct ${directGateway}`,
+      `process ${processStatus} on :${processPort}`,
+      `provider ${runtimeProviderLabel}`,
+      `model ${preferredModel}`,
+      `session ${session}`,
+    ].join('\n');
+  }, [
+    activeSessionId,
+    currentProfile,
+    gateway.builderStatus,
+    gateway.directGatewayHealth,
+    gateway.health,
+    gateway.processStatus?.port,
+    gateway.processStatus?.status,
+    preferredModel,
+    runtimeProviderLabel,
+  ]);
+
+  const send = useCallback(async (overrideInput?: string) => {
+    const draftInput = typeof overrideInput === 'string' ? overrideInput : input;
+    const trimmedInput = draftInput.trim();
+    const hasNoContent = !trimmedInput && attachments.length === 0 && imageAttachments.length === 0;
+    if (hasNoContent || streaming || uploadingImages || voiceState === 'recording' || voiceState === 'processing') return;
+
+    const command = parseCommandInput(trimmedInput);
+    if (command && attachments.length === 0 && imageAttachments.length === 0 && isLocalCommand(command.id)) {
+      if (command.id === 'new') {
+        handleNewChat();
+      } else if (command.id === 'usage') {
+        appendLocalAssistantMessage(formatUsageStatus(usage));
+      } else if (command.id === 'status') {
+        appendLocalAssistantMessage(formatStatusMessage());
+      }
+      setInput('');
+      return;
+    }
+
+    const textSeed = trimmedInput || (imageAttachments.length > 0
+      ? 'Analyze the attached images.'
+      : 'Analyze the attached context references and answer from them.');
     const enrichedInput = buildUserContent(textSeed);
-    const displayContent = imageAttachments.length > 0 ? `${enrichedInput}\n\n[Attached images: ${imageAttachments.length}]` : enrichedInput;
+    const displayBlocks = [enrichedInput];
+    if (imageAttachments.length > 0) displayBlocks.push(`[Attached images: ${imageAttachments.length}]`);
+    const displayContent = displayBlocks.join('\n\n');
     const userMsg: Message = { role: 'user', content: displayContent, timestamp: Date.now() };
     const currentImages = imageAttachments;
     const effectiveModel = model;
@@ -739,11 +944,14 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
         const created = await apiClient.sessions.create({ source: 'api-server', model: effectiveModel });
         sessionId = created.data?.id || null;
         if (sessionId) setActiveSessionId(sessionId);
-      } catch { sessionId = null; }
+      } catch {
+        sessionId = null;
+      }
     }
 
     setInput('');
     setStreaming(true);
+    setUsage(null);
     clearPendingAttachments();
     setMessages(current => [...current, userMsg, { role: 'assistant', content: '', timestamp: Date.now() }]);
 
@@ -757,46 +965,81 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
     let finalAssistantToolName: string | undefined;
     let finalAssistantToolResults: unknown;
     let persistedByGateway = false;
+    let accumulatedUsage: ChatUsage | null = null;
+
     try {
-      const response = await apiClient.gateway.streamChat({ model: effectiveModel, provider, think: preferredThink, messages: payloadMessages, stream: true, session_id: sessionId || undefined, source: 'api-server' });
+      const response = await apiClient.gateway.streamChat({
+        model: effectiveModel,
+        provider,
+        think: preferredThink,
+        messages: payloadMessages,
+        stream: true,
+        session_id: sessionId || undefined,
+        source: 'api-server',
+      });
       if (!response.ok) throw new Error('Stream failed');
       const reader = response.body?.getReader();
       if (!reader) throw new Error('Reader unavailable');
+
       const decoder = new TextDecoder();
-      let buffer = '';
+      let parserBuffer = '';
       let accumulated = '';
       let accumulatedToolCalls: ChatToolCall[] = [];
+
+      const consumeParsedEvents = (parsedEvents: ReturnType<typeof parseSseChunk>['events']) => {
+        for (const event of parsedEvents) {
+          if (event.done || event.malformed) continue;
+
+          if (event.usage) {
+            accumulatedUsage = mergeUsage(accumulatedUsage, event.usage);
+            setUsage(current => mergeUsage(current, event.usage));
+          }
+
+          if (event.error && !accumulated) {
+            accumulated = event.error;
+            updateLastAssistantMessage(message => ({ ...message, content: accumulated }));
+          }
+
+          const toolCallDeltas = normalizeToolCallDeltas(event.toolCallDeltas);
+          if (Array.isArray(toolCallDeltas) && toolCallDeltas.length > 0) {
+            accumulatedToolCalls = mergeToolCallDeltas(accumulatedToolCalls, toolCallDeltas);
+            finalAssistantToolCalls = accumulatedToolCalls;
+            updateLastAssistantMessage(message => ({ ...message, toolCalls: accumulatedToolCalls }));
+          }
+
+          if (!event.contentDelta) continue;
+          accumulated += event.contentDelta;
+          updateLastAssistantMessage(message => ({ ...message, content: accumulated }));
+        }
+      };
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const data = line.slice(6).trim();
-          if (data === '[DONE]') continue;
-          try {
-            const parsed = JSON.parse(data);
-            const content = parsed.choices?.[0]?.delta?.content;
-            const toolCalls = parsed.choices?.[0]?.delta?.tool_calls;
-            if (Array.isArray(toolCalls) && toolCalls.length > 0) {
-              accumulatedToolCalls = mergeToolCallDeltas(accumulatedToolCalls, toolCalls);
-              finalAssistantToolCalls = accumulatedToolCalls;
-              updateLastAssistantMessage(message => ({ ...message, toolCalls: accumulatedToolCalls }));
-            }
-            if (!content) continue;
-            accumulated += content;
-            updateLastAssistantMessage(message => ({ ...message, content: accumulated }));
-          } catch { continue; }
-        }
+        const text = decoder.decode(value, { stream: true });
+        const parsedChunk = parseSseChunk(parserBuffer, text);
+        parserBuffer = parsedChunk.buffer;
+        consumeParsedEvents(parsedChunk.events);
       }
+
+      if (parserBuffer.trim()) {
+        const finalParsedChunk = parseSseChunk(parserBuffer, '\n\n');
+        consumeParsedEvents(finalParsedChunk.events);
+      }
+
       finalAssistantText = accumulated;
       finalAssistantToolCalls = accumulatedToolCalls.length > 0 ? accumulatedToolCalls : undefined;
       await maybeSpeakAssistantReply(accumulated);
     } catch {
       try {
-        const response = await apiClient.gateway.chat({ model: effectiveModel, provider, think: preferredThink, messages: payloadMessages, session_id: sessionId || undefined, source: 'api-server' });
+        const response = await apiClient.gateway.chat({
+          model: effectiveModel,
+          provider,
+          think: preferredThink,
+          messages: payloadMessages,
+          session_id: sessionId || undefined,
+          source: 'api-server',
+        });
         const assistantMessage = response.data.choices?.[0]?.message || {};
         const content = assistantMessage.content || 'No response.';
         finalAssistantText = content;
@@ -805,8 +1048,13 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
         finalAssistantToolResults = Object.prototype.hasOwnProperty.call(assistantMessage, 'tool_results')
           ? assistantMessage.tool_results
           : undefined;
+        accumulatedUsage = normalizeGatewayUsage(response.data);
+        setUsage(accumulatedUsage);
         persistedByGateway = true;
-        if (!sessionId && response.data?.session_id) { sessionId = String(response.data.session_id); setActiveSessionId(sessionId); }
+        if (!sessionId && response.data?.session_id) {
+          sessionId = String(response.data.session_id);
+          setActiveSessionId(sessionId);
+        }
         updateLastAssistantMessage(message => ({
           ...message,
           content,
@@ -820,22 +1068,51 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
         updateLastAssistantMessage(message => ({ ...message, content: finalAssistantText }));
       }
     } finally {
+      if (accumulatedUsage) {
+        setUsage(current => mergeUsage(current, accumulatedUsage));
+      }
+
       if (sessionId && !persistedByGateway && (finalAssistantText || finalAssistantToolCalls?.length || finalAssistantToolName || finalAssistantToolResults != null)) {
-        apiClient.sessions.appendMessages(sessionId, { model: effectiveModel, source: 'api-server', messages: [
-          { role: 'user', content: userMsg.content, timestamp: userMsg.timestamp },
-          {
-            role: 'assistant',
-            content: finalAssistantText,
-            timestamp: Date.now(),
-            tool_calls: finalAssistantToolCalls,
-            tool_name: finalAssistantToolName,
-            tool_results: finalAssistantToolResults,
-          },
-        ] }).catch(() => {});
+        apiClient.sessions.appendMessages(sessionId, {
+          model: effectiveModel,
+          source: 'api-server',
+          messages: [
+            { role: 'user', content: userMsg.content, timestamp: userMsg.timestamp },
+            {
+              role: 'assistant',
+              content: finalAssistantText,
+              timestamp: Date.now(),
+              token_count: accumulatedUsage?.completionTokens ?? accumulatedUsage?.totalTokens ?? undefined,
+              tool_calls: finalAssistantToolCalls,
+              tool_name: finalAssistantToolName,
+              tool_results: finalAssistantToolResults,
+            },
+          ],
+        }).catch(() => {});
       }
       setStreaming(false);
     }
-  }, [activeSessionId, attachments.length, buildUserContent, clearPendingAttachments, imageAttachments, input, messages, model, maybeSpeakAssistantReply, preferredThink, provider, streaming, updateLastAssistantMessage, uploadingImages, voiceState]);
+  }, [
+    activeSessionId,
+    appendLocalAssistantMessage,
+    attachments.length,
+    buildUserContent,
+    clearPendingAttachments,
+    formatStatusMessage,
+    handleNewChat,
+    imageAttachments,
+    input,
+    messages,
+    model,
+    maybeSpeakAssistantReply,
+    preferredThink,
+    provider,
+    streaming,
+    updateLastAssistantMessage,
+    uploadingImages,
+    usage,
+    voiceState,
+  ]);
 
   const handleVoiceToggle = useCallback(async () => {
     if (streaming || uploadingImages || voiceState === 'processing') return;
@@ -859,11 +1136,40 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
         try {
           setVoiceState('processing');
           setVoiceError(null);
+          let sessionId = activeSessionId;
+          if (!sessionId) {
+            try {
+              const created = await apiClient.sessions.create({ source: 'api-server', model: effectiveModel });
+              sessionId = created.data?.id || null;
+              if (sessionId) setActiveSessionId(sessionId);
+            } catch {
+              sessionId = null;
+            }
+          }
           const audioDataUrl = await readBlobAsDataUrl(blob);
           const contextText = buildAttachedContext();
           const response = await apiClient.voice.respond({ model: effectiveModel, think: preferredThink, messages: messages.map(m => ({ role: m.role, content: m.content })), audioDataUrl, contextText, images: imageAttachments });
+          const now = Date.now();
+          const userVoiceMessage: Message = { role: 'user', content: response.data.transcript, timestamp: now, isVoice: true };
+          const assistantVoiceMessage: Message = {
+            role: 'assistant',
+            content: response.data.assistantText,
+            timestamp: now,
+            audioUrl: response.data.audioUrl,
+            isVoice: true,
+          };
           clearPendingAttachments();
-          setMessages(current => [...current, { role: 'user', content: response.data.transcript, timestamp: Date.now(), isVoice: true }, { role: 'assistant', content: response.data.assistantText, timestamp: Date.now(), audioUrl: response.data.audioUrl, isVoice: true }]);
+          setMessages(current => [...current, userVoiceMessage, assistantVoiceMessage]);
+          if (sessionId) {
+            apiClient.sessions.appendMessages(sessionId, {
+              model: effectiveModel,
+              source: 'api-server',
+              messages: [
+                { role: 'user', content: userVoiceMessage.content, timestamp: userVoiceMessage.timestamp },
+                { role: 'assistant', content: assistantVoiceMessage.content, timestamp: assistantVoiceMessage.timestamp },
+              ],
+            }).catch(() => {});
+          }
           await playAudio(response.data.audioUrl);
         } catch (error) {
           console.error(error);
@@ -880,7 +1186,7 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
       setVoiceError('Microphone access denied or unavailable.');
       setVoiceState('idle');
     }
-  }, [audioRef, buildAttachedContext, clearPendingAttachments, imageAttachments, messages, model, playAudio, preferredThink, streaming, uploadingImages, voiceState, voiceSupported]);
+  }, [activeSessionId, audioRef, buildAttachedContext, clearPendingAttachments, imageAttachments, messages, model, playAudio, preferredThink, streaming, uploadingImages, voiceState, voiceSupported]);
 
   // ── Voice label ─────────────────────────────────────────────
   const voiceStatusLabel = voiceState === 'recording' ? 'Recording...'
@@ -895,7 +1201,7 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
   // ── Return ──────────────────────────────────────────────────
   return {
     // State
-    messages, activeSessionId, input, streaming, model, provider,
+    messages, activeSessionId, input, streaming, usage, model, provider,
     attachments, imageAttachments, uploadingImages,
     imageError, newAttachmentKind, newAttachmentValue, resolvedAttachments,
     resolvingRefs, voiceMode, voiceState, voiceError, voiceSupported, speakingMessageIndex,
@@ -905,13 +1211,13 @@ export function useChat({ requestedSessionId = null, requestNonce = 0, audioRef 
     totalResolvedChars, canAddReference,
     voiceStatusLabel, contextStatusLabel,
     contextTokensEstimate, contextWindowTokens, contextUsagePercent,
-    preferredModel, runtimeProvider, runtimeProviderLabel,
+    preferredModel, runtimeProvider, runtimeProviderLabel, chatCommands: CHAT_COMMANDS,
     // Setters
     setInput, setVoiceMode,
     setNewAttachmentKind, setNewAttachmentValue,
     // Actions
     send, handleNewChat, handleVoiceToggle,
-    speakMessageAt,
+    speakMessageAt, handleMessageAudioEnded,
     addAttachment, removeAttachment,
     attachImageFiles, removeImage,
     handlePaste, handleFileSelection,

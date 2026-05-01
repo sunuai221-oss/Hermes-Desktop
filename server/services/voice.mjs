@@ -22,7 +22,9 @@ const execFileAsync = promisify(execFileCb);
  * Parse an audio data URL into a buffer + extension.
  */
 function parseAudioDataUrl(dataUrl) {
-  const match = String(dataUrl || '').match(/^data:audio\/([a-zA-Z0-9.+-]+);base64,(.+)$/);
+  const match = String(dataUrl || '')
+    .trim()
+    .match(/^data:audio\/([^;,]+)(?:;[^;,]+)*;base64,([\s\S]+)$/i);
   if (!match) {
     throw new Error('Unsupported audio data URL');
   }

@@ -11,6 +11,7 @@ interface ChatMessagesProps {
   showTools: boolean;
   speakingMessageIndex?: number | null;
   onSpeakMessage?: (index: number, content: string) => Promise<void> | void;
+  onMessageAudioEnded?: (audioUrl: string) => void;
 }
 
 const SCROLL_BOTTOM_THRESHOLD = 96;
@@ -23,6 +24,7 @@ export function ChatMessages({
   showTools,
   speakingMessageIndex = null,
   onSpeakMessage,
+  onMessageAudioEnded,
 }: ChatMessagesProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -143,7 +145,13 @@ export function ChatMessages({
                     <MessageContent content={message.content} showThinking={showThinking} />
                     {showTools && hasToolData(message) && <ToolCallList message={message} />}
                     {message.audioUrl && (
-                      <audio controls preload="none" src={message.audioUrl} className="mt-3 w-full max-w-sm" />
+                      <audio
+                        controls
+                        preload="none"
+                        src={message.audioUrl}
+                        className="mt-3 w-full max-w-sm"
+                        onEnded={() => onMessageAudioEnded?.(message.audioUrl!)}
+                      />
                     )}
                     {hasMessageText && (
                       <div className="mt-3 flex items-center gap-1.5">

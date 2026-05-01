@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   FileCode2, FolderOpen, GitBranch, Globe, ImagePlus,
-  Link2, Mic, Plus, Send, Square, X,
+  Link2, Mic, Plus, Send, Square, X, Command,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { ContextReferenceAttachment, ImageAttachment } from '../../types';
+import type { ChatCommandDefinition } from '../../hooks/useChat';
 
 const MAX_IMAGES = 5;
 
@@ -25,9 +26,10 @@ const REF_KINDS: Array<{
 interface ChatInputProps {
   input: string;
   onInputChange: (value: string) => void;
-  onSend: () => void;
+  onSend: (value?: string) => void;
   onPaste: (event: React.ClipboardEvent<HTMLElement>) => void;
   streaming: boolean;
+  chatCommands: ChatCommandDefinition[];
   // Attachments
   attachments: ContextReferenceAttachment[];
   newAttachmentKind: ContextReferenceAttachment['kind'];
@@ -57,7 +59,7 @@ interface ChatInputProps {
 }
 
 export function ChatInput({
-  input, onInputChange, onSend, onPaste, streaming,
+  input, onInputChange, onSend, onPaste, streaming, chatCommands,
   attachments, newAttachmentKind, newAttachmentValue, canAddReference,
   onKindChange, onValueChange, onAddAttachment, onRemoveAttachment,
   contextStatusLabel, contextTokensEstimate, contextWindowTokens, contextUsagePercent,
@@ -65,6 +67,8 @@ export function ChatInput({
   voiceState, voiceError, onVoiceToggle,
 }: ChatInputProps) {
   const [showRefBar, setShowRefBar] = useState(false);
+  const [commandIndex, setCommandIndex] = useState(0);
+  const [dismissedCommandPalette, setDismissedCommandPalette] = useState(false);
   const isBusy = streaming || uploadingImages || voiceState === 'recording' || voiceState === 'processing';
   const canSend = (input.trim().length > 0 || attachments.length > 0 || imageAttachments.length > 0) && !isBusy;
   const hasAttachments = attachments.length > 0 || imageAttachments.length > 0;
@@ -77,6 +81,21 @@ export function ChatInput({
       : contextUsagePercent >= 75
         ? 'bg-warning'
         : 'bg-success';
+  const commandQuery = useMemo(() => {
+    if (!input.startsWith('/')) return '';
+    return input.slice(1).split(/\s+/)[0].toLowerCase();
+  }, [input]);
+  const visibleCommands = useMemo(() => {
+    if (!input.startsWith('/')) return [];
+    if (!commandQuery) return chatCommands;
+    return chatCommands.filter(item =>
+      item.id.includes(commandQuery) || item.command.includes(commandQuery),
+    );
+  }, [chatCommands, commandQuery, input]);
+  const showCommandPalette = input.startsWith('/') && !dismissedCommandPalette && visibleCommands.length > 0;
+  const activeCommandIndex = showCommandPalette
+    ? Math.min(Math.max(commandIndex, 0), visibleCommands.length - 1)
+    : 0;
 
   return (
     <div className="border-t border-border">
@@ -249,11 +268,64 @@ export function ChatInput({
 
         {/* Text input */}
         <div className="relative flex-1">
+          {showCommandPalette && (
+            <div className="absolute bottom-full left-0 right-0 mb-2 rounded-lg border border-border/70 bg-popover/95 shadow-lg backdrop-blur-sm z-20 overflow-hidden">
+              {visibleCommands.map((item, index) => (
+                <button
+                  key={item.command}
+                    onClick={() => {
+                      setDismissedCommandPalette(true);
+                      onSend(item.command);
+                    }}
+                  className={cn(
+                    'w-full px-3 py-2 text-left text-xs transition-colors border-b last:border-b-0 border-border/30',
+                    index === activeCommandIndex ? 'bg-primary/12 text-foreground' : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+                  )}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-mono text-[11px] text-foreground/85">{item.command}</span>
+                    {item.localOnly && <span className="text-[10px] text-muted-foreground/70">local</span>}
+                  </div>
+                  <p className="mt-0.5 text-[10px] text-muted-foreground/70">{item.description}</p>
+                </button>
+              ))}
+            </div>
+          )}
+
           <textarea
             value={input}
-            onChange={e => onInputChange(e.target.value)}
+            onChange={e => {
+              setDismissedCommandPalette(false);
+              onInputChange(e.target.value);
+            }}
             onPaste={onPaste}
             onKeyDown={e => {
+              if (showCommandPalette) {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  setCommandIndex(current => (current + 1) % visibleCommands.length);
+                  return;
+                }
+                if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  setCommandIndex(current => (current - 1 + visibleCommands.length) % visibleCommands.length);
+                  return;
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setDismissedCommandPalette(true);
+                  return;
+                }
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  const selected = visibleCommands[activeCommandIndex];
+                  if (selected) {
+                    setDismissedCommandPalette(true);
+                    onSend(selected.command);
+                    return;
+                  }
+                }
+              }
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 void onSend();
@@ -284,7 +356,7 @@ export function ChatInput({
             {isBusy ? (
               <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
             ) : (
-              <Send size={14} />
+              input.startsWith('/') ? <Command size={14} /> : <Send size={14} />
             )}
           </button>
         </div>

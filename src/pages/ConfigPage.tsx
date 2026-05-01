@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import type { AxiosError } from 'axios';
-import { Save, Settings, RefreshCw, Zap, Eye, MessageSquare, AlertTriangle, DatabaseZap } from 'lucide-react';
+import { Save, Settings, RefreshCw, Zap, Eye, MessageSquare, AlertTriangle, DatabaseZap, Activity, FileText, ShieldCheck, Archive, Copy } from 'lucide-react';
 import { Card } from '../components/Card';
 import { StatusBadge } from '../components/StatusBadge';
 import { useGatewayContext } from '../contexts/GatewayContext';
@@ -11,6 +11,30 @@ import { cn, formatUptime } from '../lib/utils';
 import type { HermesConfig } from '../types';
 
 type NestedConfigNode = Record<string, unknown>;
+type DiagnosticsAction = 'health' | 'logs' | 'doctor' | 'dump' | 'backup';
+
+interface DiagnosticsSnapshot {
+  processStatus?: {
+    status?: string;
+    gateway_state?: string;
+    port?: number | null;
+    pid?: number;
+    managed?: boolean;
+    status_source?: string;
+    gateway_url?: string;
+  } | null;
+  health?: { status?: string; [key: string]: unknown } | null;
+  detailedHealth?: unknown;
+  detailedHealthEndpoint?: string | null;
+  logs?: {
+    path?: string | null;
+    updatedAt?: string | null;
+    sizeBytes?: number;
+    truncated?: boolean;
+    content?: string;
+    note?: string;
+  } | null;
+}
 
 export function ConfigPage() {
   const gateway = useGatewayContext();
@@ -18,10 +42,42 @@ export function ConfigPage() {
   const [config, setConfig] = useState<HermesConfig | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<DiagnosticsSnapshot | null>(null);
+  const [diagnosticsOutput, setDiagnosticsOutput] = useState('');
+  const [diagnosticsStatus, setDiagnosticsStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState<Record<DiagnosticsAction, boolean>>({
+    health: false,
+    logs: false,
+    doctor: false,
+    dump: false,
+    backup: false,
+  });
+
+  const setActionLoading = useCallback((action: DiagnosticsAction, loading: boolean) => {
+    setDiagnosticsLoading(current => ({ ...current, [action]: loading }));
+  }, []);
+
+  const refreshDiagnostics = useCallback(async () => {
+    setActionLoading('health', true);
+    setDiagnosticsStatus(null);
+    try {
+      const response = await api.gateway.diagnostics();
+      const snapshot = response.data as DiagnosticsSnapshot;
+      setDiagnostics(snapshot);
+      setDiagnosticsOutput(formatDiagnosticsSummary(snapshot));
+      setDiagnosticsStatus({ tone: 'success', message: 'Health refreshed.' });
+    } catch (error) {
+      const message = (error as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Could not refresh diagnostics.';
+      setDiagnosticsStatus({ tone: 'error', message });
+    } finally {
+      setActionLoading('health', false);
+    }
+  }, [setActionLoading]);
 
   useEffect(() => {
     api.config.get().then(res => setConfig(res.data)).catch(console.error);
-  }, []);
+    void refreshDiagnostics();
+  }, [refreshDiagnostics]);
 
   const update = (path: string[], value: unknown) => {
     setConfig(currentConfig => {
@@ -58,6 +114,57 @@ export function ConfigPage() {
       setSaving(false);
     }
   };
+
+  const viewLogs = useCallback(async () => {
+    setActionLoading('logs', true);
+    setDiagnosticsStatus(null);
+    try {
+      const response = await api.gateway.diagnosticsLogs();
+      const logs = response.data as DiagnosticsSnapshot['logs'];
+      setDiagnostics(current => ({ ...(current || {}), logs: logs || null }));
+      setDiagnosticsOutput(formatLogsOutput(logs || null));
+      setDiagnosticsStatus({ tone: 'success', message: 'Logs loaded.' });
+    } catch (error) {
+      const message = (error as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Could not read gateway logs.';
+      setDiagnosticsStatus({ tone: 'error', message });
+    } finally {
+      setActionLoading('logs', false);
+    }
+  }, [setActionLoading]);
+
+  const runDiagnosticCommand = useCallback(async (
+    action: Extract<DiagnosticsAction, 'doctor' | 'dump' | 'backup'>,
+    request: () => Promise<{ data: Record<string, unknown> }>,
+  ) => {
+    setActionLoading(action, true);
+    setDiagnosticsStatus(null);
+    try {
+      const response = await request();
+      const payload = response.data || {};
+      setDiagnosticsOutput(formatCommandOutput(payload));
+      if (payload.ok === false) {
+        setDiagnosticsStatus({ tone: 'error', message: `${action} failed.` });
+      } else {
+        setDiagnosticsStatus({ tone: 'success', message: `${action} completed.` });
+      }
+    } catch (error) {
+      const message = (error as { response?: { data?: { error?: string } } })?.response?.data?.error || `${action} failed.`;
+      setDiagnosticsStatus({ tone: 'error', message });
+    } finally {
+      setActionLoading(action, false);
+    }
+  }, [setActionLoading]);
+
+  const copyDiagnosticsOutput = useCallback(async () => {
+    const text = diagnosticsOutput.trim();
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setDiagnosticsStatus({ tone: 'success', message: 'Diagnostics output copied.' });
+    } catch {
+      setDiagnosticsStatus({ tone: 'error', message: 'Clipboard copy failed.' });
+    }
+  }, [diagnosticsOutput]);
 
   if (!config) {
     return (
@@ -146,6 +253,92 @@ export function ConfigPage() {
           </div>
         );
       })()}
+
+      <Card className="p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="flex items-center gap-2 text-base font-semibold">
+              <Activity size={16} className="text-primary" />
+              Diagnostics
+            </h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Health, process state, logs, and Hermes runtime checks.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <ActionButton
+              icon={<RefreshCw size={13} className={diagnosticsLoading.health ? 'animate-spin' : ''} />}
+              label="Refresh health"
+              loading={diagnosticsLoading.health}
+              onClick={() => void refreshDiagnostics()}
+            />
+            <ActionButton
+              icon={<FileText size={13} />}
+              label="View logs"
+              loading={diagnosticsLoading.logs}
+              onClick={() => void viewLogs()}
+            />
+            <ActionButton
+              icon={<ShieldCheck size={13} />}
+              label="Run doctor"
+              loading={diagnosticsLoading.doctor}
+              onClick={() => void runDiagnosticCommand('doctor', () => api.gateway.diagnosticsDoctor())}
+            />
+            <ActionButton
+              icon={<FileText size={13} />}
+              label="Generate dump"
+              loading={diagnosticsLoading.dump}
+              onClick={() => void runDiagnosticCommand('dump', () => api.gateway.diagnosticsDump())}
+            />
+            <ActionButton
+              icon={<Archive size={13} />}
+              label="Create backup"
+              loading={diagnosticsLoading.backup}
+              onClick={() => void runDiagnosticCommand('backup', () => api.gateway.diagnosticsBackup())}
+            />
+          </div>
+        </div>
+
+        <div className="mt-3 grid grid-cols-1 gap-2 text-[11px] text-muted-foreground md:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-md border border-border/50 bg-muted/30 px-2.5 py-2">
+            process: <span className="font-mono text-foreground/80">{diagnostics?.processStatus?.status || 'unknown'}</span>
+          </div>
+          <div className="rounded-md border border-border/50 bg-muted/30 px-2.5 py-2">
+            gateway: <span className="font-mono text-foreground/80">{String(diagnostics?.health?.status || 'offline')}</span>
+          </div>
+          <div className="rounded-md border border-border/50 bg-muted/30 px-2.5 py-2">
+            pid: <span className="font-mono text-foreground/80">{diagnostics?.processStatus?.pid ?? 'n/a'}</span>
+          </div>
+          <div className="rounded-md border border-border/50 bg-muted/30 px-2.5 py-2">
+            port: <span className="font-mono text-foreground/80">{diagnostics?.processStatus?.port ?? 'n/a'}</span>
+          </div>
+        </div>
+
+        <div className="mt-3 rounded-md border border-border/50 bg-muted/20">
+          <div className="flex items-center justify-between border-b border-border/40 px-2.5 py-1.5">
+            <span className="text-[11px] text-muted-foreground">Output</span>
+            <button
+              onClick={() => void copyDiagnosticsOutput()}
+              className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <Copy size={11} />
+              Copy
+            </button>
+          </div>
+          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words px-2.5 py-2 text-[11px] leading-relaxed text-foreground/85 font-mono">
+            {diagnosticsOutput || 'No diagnostics output yet.'}
+          </pre>
+        </div>
+
+        {diagnosticsStatus && (
+          <p className={cn(
+            'mt-2 text-xs',
+            diagnosticsStatus.tone === 'error' ? 'text-destructive' : 'text-success',
+          )}>
+            {diagnosticsStatus.message}
+          </p>
+        )}
+      </Card>
 
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
         <Card className="p-6">
@@ -514,6 +707,82 @@ function SectionTitle({ icon, title }: { icon: React.ReactNode; title: string })
       <span className="text-primary">{icon}</span> {title}
     </h3>
   );
+}
+
+function ActionButton({
+  icon,
+  label,
+  loading,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  loading: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={loading}
+      className="inline-flex items-center gap-1.5 rounded-md border border-border/60 bg-muted/35 px-2.5 py-1.5 text-[11px] text-foreground/85 hover:bg-muted disabled:opacity-45 transition-colors"
+    >
+      {loading ? <RefreshCw size={13} className="animate-spin" /> : icon}
+      {label}
+    </button>
+  );
+}
+
+function formatDiagnosticsSummary(snapshot: DiagnosticsSnapshot | null): string {
+  if (!snapshot) return 'Diagnostics unavailable.';
+  const parts = [
+    `process status: ${snapshot.processStatus?.status || 'unknown'}`,
+    `gateway status: ${String(snapshot.health?.status || 'offline')}`,
+    `gateway state: ${snapshot.processStatus?.gateway_state || 'unknown'}`,
+    `pid: ${snapshot.processStatus?.pid ?? 'n/a'}`,
+    `port: ${snapshot.processStatus?.port ?? 'n/a'}`,
+    `source: ${snapshot.processStatus?.status_source || 'unknown'}`,
+  ];
+
+  if (snapshot.detailedHealthEndpoint) {
+    parts.push(`detailed endpoint: ${snapshot.detailedHealthEndpoint}`);
+  }
+  if (snapshot.logs?.path) {
+    parts.push(`log file: ${snapshot.logs.path}`);
+  }
+  if (snapshot.logs?.note) {
+    parts.push(snapshot.logs.note);
+  }
+
+  return parts.join('\n');
+}
+
+function formatLogsOutput(logs: DiagnosticsSnapshot['logs'] | null | undefined): string {
+  if (!logs) return 'No logs returned.';
+  const header = [
+    `path: ${logs.path || 'n/a'}`,
+    `updated: ${logs.updatedAt || 'n/a'}`,
+    `size: ${typeof logs.sizeBytes === 'number' ? `${logs.sizeBytes} bytes` : 'n/a'}`,
+    logs.truncated ? 'truncated: true' : 'truncated: false',
+  ].join('\n');
+  const body = String(logs.content || logs.note || '').trim();
+  return body ? `${header}\n\n${body}` : header;
+}
+
+function formatCommandOutput(payload: Record<string, unknown>): string {
+  const command = String(payload.command || 'hermes command');
+  const distro = String(payload.distro || 'unknown');
+  const status = payload.ok === false ? 'failed' : 'ok';
+  const code = payload.code == null ? '' : `\ncode: ${String(payload.code)}`;
+  const stdout = String(payload.stdout || '').trim();
+  const stderr = String(payload.stderr || '').trim();
+  const chunks = [
+    `command: ${command}`,
+    `distro: ${distro}`,
+    `status: ${status}${code}`,
+  ];
+  if (stdout) chunks.push(`stdout:\n${stdout}`);
+  if (stderr) chunks.push(`stderr:\n${stderr}`);
+  return chunks.join('\n\n');
 }
 
 function Field({ label, value, onChange, type = 'text' }: {

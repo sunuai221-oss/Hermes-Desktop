@@ -95,8 +95,8 @@
     @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;
     background-image:
-      radial-gradient(circle at top left, hsl(var(--brand-gold) / 0.08), transparent 24%),
-      radial-gradient(circle at 88% 12%, hsl(var(--brand-amber) / 0.08), transparent 20%),
+      radial-gradient(circle at top left, hsl(var(--brand-gold) / 0.04), transparent 22%),
+      radial-gradient(circle at 88% 12%, hsl(var(--brand-amber) / 0.04), transparent 18%),
       linear-gradient(180deg, hsl(var(--background)), hsl(var(--background)));
     background-attachment: fixed;
   }

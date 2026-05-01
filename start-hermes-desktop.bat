@@ -14,6 +14,9 @@ if exist "%ROOT%\hermes-desktop.local.cmd" (
 ) else if exist "%ROOT%\hermes-builder.local.cmd" (
   call "%ROOT%\hermes-builder.local.cmd"
 )
+if not defined HERMES_WSL_DISTRO set "HERMES_WSL_DISTRO=Ubuntu"
+if not defined HERMES_WSL_HOME set "HERMES_WSL_HOME=/home/nabs/.hermes"
+if not defined HERMES_HOME set "HERMES_HOME=\\wsl.localhost\%HERMES_WSL_DISTRO%\home\nabs\.hermes"
 if not defined HERMES_GATEWAY_PORT set "HERMES_GATEWAY_PORT=8642"
 if not defined HERMES_DESKTOP_PORT set "HERMES_DESKTOP_PORT=3130"
 set "GATEWAY_BASE_URL=http://127.0.0.1:%HERMES_GATEWAY_PORT%"

@@ -1,13 +1,14 @@
 import type { ReactNode } from 'react';
 import { BrainCircuit, KeyRound, Trash2, Volume2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import type { ConnectionStatus } from '../../types';
+import type { ChatUsage, ConnectionStatus } from '../../types';
 
 interface ChatToolbarProps {
   currentProfile: string;
   runtimeStatus: ConnectionStatus;
   runtimeProviderLabel: string;
   preferredModel: string;
+  usage: ChatUsage | null;
   currentSessionLabel: string | null;
   showThinking: boolean;
   showTools: boolean;
@@ -24,6 +25,7 @@ export function ChatToolbar({
   runtimeStatus,
   runtimeProviderLabel,
   preferredModel,
+  usage,
   currentSessionLabel,
   showThinking,
   showTools,
@@ -72,6 +74,25 @@ export function ChatToolbar({
                 session: <span className="font-mono text-foreground/75">{currentSessionLabel}</span>
               </p>
             )}
+            <div className="mt-1.5 rounded-md border border-border/50 bg-muted/35 px-2 py-1 text-[10px]">
+              {usage ? (
+                <p className="truncate text-muted-foreground/85">
+                  usage: <span className="font-mono text-foreground/80">{formatUsageStat(usage.totalTokens)}</span>
+                  {' '}tokens (p{' '}
+                  <span className="font-mono text-foreground/80">{formatUsageStat(usage.promptTokens)}</span>
+                  {' '}c{' '}
+                  <span className="font-mono text-foreground/80">{formatUsageStat(usage.completionTokens)}</span>
+                  ){usage.cost != null && Number.isFinite(usage.cost) ? (
+                    <> {' • '}cost <span className="font-mono text-foreground/80">${usage.cost.toFixed(6)}</span></>
+                  ) : null}
+                  {usage.rateLimitRemaining != null ? (
+                    <> {' • '}rl <span className="font-mono text-foreground/80">{formatUsageStat(usage.rateLimitRemaining)}</span></>
+                  ) : null}
+                </p>
+              ) : (
+                <p className="text-muted-foreground/65">usage unavailable</p>
+              )}
+            </div>
           </div>
         </div>
 
@@ -114,6 +135,11 @@ export function ChatToolbar({
       )}
     </div>
   );
+}
+
+function formatUsageStat(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return 'n/a';
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value);
 }
 
 function IconToggle({

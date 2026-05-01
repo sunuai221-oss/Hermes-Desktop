@@ -39,6 +39,7 @@
     "preview": "vite preview",
     "desktop": "electron .",
     "desktop:dev": "node electron/launch-dev.mjs",
+    "desktop:smoke": "node scripts/desktop-smoke.mjs",
     "desktop:pack": "npm run build && electron-builder --dir",
     "desktop:build": "npm run build && electron-builder --win nsis"
   },
@@ -95,7 +96,10 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "perMachine": false
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Hermes Desktop"
     }
   }
 }

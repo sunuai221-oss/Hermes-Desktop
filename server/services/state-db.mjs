@@ -57,6 +57,7 @@ function initializeStateDb(dbPath, db) {
       INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.id, COALESCE(old.content, ''));
       INSERT INTO messages_fts(rowid, content) VALUES (new.id, COALESCE(new.content, ''));
     END;
+
   `);
 }
 

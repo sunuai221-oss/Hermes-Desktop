@@ -37,6 +37,15 @@ const DIRECT_GATEWAY_BASE = (
     : 'http://127.0.0.1:8642')
 ).replace(/\/$/, '');
 const http = axios.create({ baseURL: BASE, timeout: 5000 });
+const scanHttp = axios.create({ baseURL: BASE, timeout: 60000 });
+
+function attachProfileHeaderInterceptor(client: ReturnType<typeof axios.create>) {
+  client.interceptors.request.use((config) => {
+    const profile = localStorage.getItem('hermes_profile') || 'default';
+    config.headers['X-Hermes-Profile'] = profile;
+    return config;
+  });
+}
 
 function withProfileHeader(profileName?: string) {
   if (!profileName) return undefined;
@@ -66,11 +75,8 @@ async function probeDirectGateway(baseUrl = DIRECT_GATEWAY_BASE) {
 }
 
 // Inject X-Hermes-Profile header from localStorage
-http.interceptors.request.use((config) => {
-  const profile = localStorage.getItem('hermes_profile') || 'default';
-  config.headers['X-Hermes-Profile'] = profile;
-  return config;
-});
+attachProfileHeaderInterceptor(http);
+attachProfileHeaderInterceptor(scanHttp);
 
 export const profiles = {
   list: () => http.get<Array<{ name: string; isDefault: boolean; model: string; port?: number; status: 'online' | 'offline'; managed?: boolean; status_source?: 'managed-profile' | 'shared-global' | 'offline'; home?: string }>>('/api/profiles/metadata'),
@@ -84,8 +90,14 @@ export const gateway = {
   directHealth: (baseUrl?: string) => probeDirectGateway(baseUrl),
   backendHealth: () => http.get('/api/desktop/health'),
   health: () => http.get('/api/gateway/health'),
+  detailedHealth: () => http.get<{ endpoint: string; data: unknown }>('/api/gateway/health/detailed'),
   state: () => http.get('/api/gateway/state'),
   processStatus: () => http.get<{ status: 'online' | 'offline'; port?: number | null; pid?: number; gateway_state?: 'starting' | 'running' | 'stopped'; managed?: boolean; status_source?: 'managed-profile' | 'shared-global' | 'offline'; gateway_url?: string; home?: string; workspace_root?: string }>('/api/gateway/process-status'),
+  diagnostics: () => http.get('/api/gateway/diagnostics'),
+  diagnosticsLogs: (lines = 400) => http.get('/api/gateway/diagnostics/logs', { params: { lines } }),
+  diagnosticsDoctor: (timeoutMs?: number) => http.post('/api/gateway/diagnostics/doctor', timeoutMs ? { timeoutMs } : {}),
+  diagnosticsDump: (timeoutMs?: number) => http.post('/api/gateway/diagnostics/dump', timeoutMs ? { timeoutMs } : {}),
+  diagnosticsBackup: (timeoutMs?: number) => http.post('/api/gateway/diagnostics/backup', timeoutMs ? { timeoutMs } : {}),
   start: (port?: number, profileName?: string) => http.post('/api/gateway/start', { port }, withProfileHeader(profileName)),
   stop: (profileName?: string) => http.post('/api/gateway/stop', {}, withProfileHeader(profileName)),
   chat: (body: ChatRequestBody) => http.post('/api/gateway/chat', body),
@@ -120,7 +132,7 @@ export const memory = {
 };
 
 export const contextFiles = {
-  get: () => http.get('/api/context-files'),
+  get: () => scanHttp.get('/api/context-files'),
   save: (filePath: string, content: string) => http.post('/api/context-files', { path: filePath, content }),
 };
 
@@ -165,6 +177,7 @@ export const sessions = {
       role: string;
       content: string;
       timestamp?: number;
+      token_count?: number;
       tool_calls?: unknown;
       tool_name?: string;
       tool_results?: unknown;
@@ -184,7 +197,7 @@ export const models = {
 };
 
 export const skills = {
-  list: () => http.get('/api/skills'),
+  list: () => scanHttp.get('/api/skills'),
   create: (payload: { name: string; description?: string; category?: string }) => http.post('/api/skills', payload),
   getContent: (filePath: string) => http.get('/api/skills/content', { params: { path: filePath } }),
   save: (filePath: string, content: string) => http.put('/api/skills', { path: filePath, content }),
@@ -211,4 +224,6 @@ export const voice = {
   }) => http.post<VoiceChatResponse>('/api/voice/respond', body),
   synthesize: (text: string) =>
     http.post<VoiceSynthesisResponse>('/api/voice/synthesize', { text }),
+  deleteAudio: (fileName: string) =>
+    http.delete(`/api/voice/audio/${encodeURIComponent(fileName)}`),
 };

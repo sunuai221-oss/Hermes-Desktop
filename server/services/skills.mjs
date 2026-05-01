@@ -96,8 +96,38 @@ function resolveLocalSkillTarget(path, hermes, inputPath) {
   return { skillsRoot, skillDir, skillFile };
 }
 
+const SKILLS_CACHE_TTL_MS = Math.max(0, Number(process.env.HERMES_SKILLS_CACHE_TTL_MS || 30000));
+
+function getSkillsCacheKey(hermes) {
+  return String(hermes?.home || 'default');
+}
+
 export function createSkillsService({ fs, path, yaml }) {
   const pathExists = createPathExists(fs);
+  const listSkillsCache = new Map();
+
+  function readSkillsCache(cacheKey) {
+    if (SKILLS_CACHE_TTL_MS <= 0) return null;
+    const cached = listSkillsCache.get(cacheKey);
+    if (!cached) return null;
+    if (Date.now() > cached.expiresAt) {
+      listSkillsCache.delete(cacheKey);
+      return null;
+    }
+    return cached.value;
+  }
+
+  function writeSkillsCache(cacheKey, value) {
+    if (SKILLS_CACHE_TTL_MS <= 0) return;
+    listSkillsCache.set(cacheKey, {
+      value,
+      expiresAt: Date.now() + SKILLS_CACHE_TTL_MS,
+    });
+  }
+
+  function invalidateSkillsCache(hermes) {
+    listSkillsCache.delete(getSkillsCacheKey(hermes));
+  }
 
   async function readConfigForSkills(hermes) {
     try {
@@ -152,6 +182,10 @@ export function createSkillsService({ fs, path, yaml }) {
   }
 
   async function listSkills(hermes) {
+    const cacheKey = getSkillsCacheKey(hermes);
+    const cached = readSkillsCache(cacheKey);
+    if (cached) return cached;
+
     const config = await readConfigForSkills(hermes);
     const externalDirs = (config.skills?.external_dirs || [])
       .map(entry => expandPath(hermes, entry))
@@ -166,7 +200,9 @@ export function createSkillsService({ fs, path, yaml }) {
       await collectSkillsRecursive(root.dir, root.dir, root.source, seenNames, results);
     }
 
-    return results.sort((a, b) => a.name.localeCompare(b.name));
+    const sortedResults = results.sort((a, b) => a.name.localeCompare(b.name));
+    writeSkillsCache(cacheKey, sortedResults);
+    return sortedResults;
   }
 
   async function createLocalSkill(hermes, input = {}) {
@@ -196,6 +232,7 @@ export function createSkillsService({ fs, path, yaml }) {
 
     await fs.mkdir(targetDir, { recursive: true });
     await fs.writeFile(skillFile, buildSkillTemplate(yaml, { name, description }), 'utf-8');
+    invalidateSkillsCache(hermes);
 
     return {
       name,
@@ -233,6 +270,7 @@ export function createSkillsService({ fs, path, yaml }) {
     }
 
     await fs.writeFile(target.skillFile, String(content || ''), 'utf-8');
+    invalidateSkillsCache(hermes);
     return { path: target.skillDir, skillFile: target.skillFile };
   }
 
@@ -249,6 +287,7 @@ export function createSkillsService({ fs, path, yaml }) {
     }
 
     await fs.rm(target.skillDir, { recursive: true, force: true });
+    invalidateSkillsCache(hermes);
     return { path: target.skillDir };
   }
 

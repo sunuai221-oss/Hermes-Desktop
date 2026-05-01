@@ -20,8 +20,20 @@ import type { HermesConfig } from '../types';
 import { useGatewayContext } from '../contexts/GatewayContext';
 
 type Toolset =
-  | 'terminal' | 'file' | 'web' | 'browser' | 'vision'
+  | 'terminal' | 'file' | 'web' | 'vision'
   | 'memory' | 'delegation' | 'send_message' | 'clarify' | 'code_execution';
+
+const ALLOWED_TOOLSETS: Toolset[] = [
+  'terminal',
+  'file',
+  'web',
+  'vision',
+  'memory',
+  'delegation',
+  'send_message',
+  'clarify',
+  'code_execution',
+];
 
 interface TaskDraft {
   goal: string;
@@ -31,7 +43,7 @@ interface TaskDraft {
 }
 
 const TOOLSET_GROUPS: { label: string; items: Toolset[] }[] = [
-  { label: 'Core', items: ['terminal', 'file', 'web', 'browser', 'vision'] },
+  { label: 'Core', items: ['terminal', 'file', 'web', 'vision'] },
   { label: 'Agent', items: ['memory', 'delegation', 'send_message', 'clarify', 'code_execution'] },
 ];
 
@@ -64,7 +76,8 @@ export function DelegationPage() {
   // Get current default toolsets from config for new tasks
   const currentDefaults = useMemo<Toolset[]>(() => {
     const raw = configDraft.default_toolsets.split(',').map(s => s.trim()).filter(Boolean);
-    return raw.length > 0 ? raw as Toolset[] : ['terminal', 'file', 'web'];
+    const filtered = raw.filter((item): item is Toolset => ALLOWED_TOOLSETS.includes(item as Toolset));
+    return filtered.length > 0 ? filtered : ['terminal', 'file', 'web'];
   }, [configDraft.default_toolsets]);
 
   const generatedPrompt = useMemo(() => {
