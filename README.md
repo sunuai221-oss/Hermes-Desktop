@@ -56,7 +56,6 @@ Required:
 Optional:
 
 - A canonical WSL worktree if you prefer to keep git history and day-to-day development on ext4.
-- Browser mode if you want to inspect the same local UI without Electron.
 - A local Kokoro-compatible TTS server, such as `http://127.0.0.1:8880`, for speech synthesis.
 - `ffmpeg` if you configure Kokoro output formats other than `wav`.
 
@@ -87,32 +86,14 @@ start-hermes-desktop-dev.bat
 
 `start-hermes-desktop.bat` is the default entrypoint. It checks Windows dependencies, verifies the Hermes gateway in WSL using `/health`, `/v1/health`, or a TCP probe, builds the UI bundle if needed, and launches Hermes Desktop in Electron.
 
-### Optional browser mode (legacy / compatibility)
-
-Use only if you need browser-based access or legacy workflows.
-
-```bat
-start-builder.bat
-```
-
-For browser development:
-
-```bat
-start-builder-dev.bat
-```
-
 ## Launcher Modes
 
-Use the Electron launcher unless you explicitly want a browser-based workflow.
+Use the Electron launcher.
 
 | Workflow | Script | When to use it |
 | --- | --- | --- |
 | Recommended desktop launch | `start-hermes-desktop.bat` | Default one-click entrypoint for normal use. |
 | Desktop development | `start-hermes-desktop-dev.bat` | Runs Electron in development mode. |
-| Optional browser mode | `start-builder.bat` | Starts the same local backend and opens the UI in a browser. |
-| Browser development | `start-builder-dev.bat` | Uses the browser workflow with dev middleware. |
-
-The `start-builder*.bat` launchers remain available for browser-first debugging and legacy-compatible workflows. They are optional and do not represent a separate product.
 
 ## Runtime Model
 
@@ -166,7 +147,7 @@ See `docs/product-roadmap.md` for the broader direction.
 - `docs/screenshots/`: README screenshots
 - `scripts/sync-to-windows.sh`: WSL-to-Windows mirror sync helper
 - `start-*.bat`: Windows launchers
-- `run-*.cmd`: supporting launcher scripts
+- `run-gateway-wsl.cmd`: WSL gateway launcher helper
 
 ## Configuration and Local Overrides
 
@@ -191,7 +172,6 @@ Most useful variables:
 Compatibility note:
 
 - `hermes-builder.local.cmd` remains supported as a legacy override filename
-- `hermes-builder.local.cmd.example` remains in the repository for older setups, but new setups should start from `hermes-desktop.local.cmd.example`
 - some internal environment variables still use `HERMES_BUILDER_*`
 - the local compatibility state directory remains `.hermes-builder/`
 
@@ -247,7 +227,6 @@ Common issues on a fresh setup:
 - The gateway does not start from Windows: verify `HERMES_WSL_DISTRO`, `HERMES_CLI_PATH`, and that the Hermes CLI works inside WSL.
 - Kokoro speech synthesis fails: verify that the Kokoro service is running, that `tts.kokoro.runtime.base_url` points to it, and that `ffmpeg` is available when using non-`wav` output.
 - You see `builder` names in logs, config, or health routes: that is expected compatibility naming, not a second product.
-- You only want to inspect the UI in a browser: use `start-builder.bat` instead of the Electron launcher.
 
 For more detail, see `docs/troubleshooting.md`.
 

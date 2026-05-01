@@ -24,8 +24,6 @@ Hermes Desktop works best with a split workflow:
 6. validate `start-hermes-desktop.bat`
 7. build a Windows package with `npm run desktop:build` when needed
 
-For normal validation, treat `start-hermes-desktop.bat` as the default user-facing path. The `start-builder*.bat` launchers remain optional browser-mode tools.
-
 ## Sync rules
 
 The Windows mirror should include source and docs, but not generated output:
@@ -48,7 +46,6 @@ The public product name is `Hermes Desktop`, but some internal compatibility nam
 Examples:
 
 - `hermes-builder.local.cmd` as a legacy override filename
-- `hermes-builder.local.cmd.example` as a legacy local template
 - `HERMES_BUILDER_*` environment variables
 - `.hermes-builder/` for compatibility state
 

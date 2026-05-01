@@ -12,8 +12,6 @@ Core files:
 - `electron/launch-dev.mjs`
 - `start-hermes-desktop.bat`
 - `start-hermes-desktop-dev.bat`
-- `start-builder.bat`
-- `start-builder-dev.bat`
 - `run-gateway-wsl.cmd`
 
 ## Launcher guide
@@ -24,10 +22,6 @@ Use these launchers according to the workflow you want:
 | --- | --- | --- |
 | `start-hermes-desktop.bat` | Normal desktop use | Recommended default entrypoint. |
 | `start-hermes-desktop-dev.bat` | Electron development | Starts Electron in development mode. |
-| `start-builder.bat` | Optional browser mode | Runs the same local backend and opens the UI in a browser. |
-| `start-builder-dev.bat` | Browser development | Uses the browser workflow with dev middleware. |
-
-The browser launchers keep older `builder` naming for compatibility and continuity. They are optional and do not represent a separate product or a separate hosted web app.
 
 ## Desktop startup flow
 
@@ -76,7 +70,6 @@ The launchers are intentionally generic. Machine-specific values belong in an ig
 Compatibility note:
 
 - older setups can keep using `hermes-builder.local.cmd`
-- `hermes-builder.local.cmd.example` remains available for older local setups
 - some internal environment variables still use `HERMES_BUILDER_*`
 - the compatibility state folder remains `.hermes-builder/`
 
@@ -133,7 +126,6 @@ Notes:
 - `asar` is currently disabled while packaged runtime path assumptions are still being verified
 - Windows packaging should be validated from the Windows mirror, not from the WSL canonical repo
 - Electron dependencies must be installed on Windows because `electron.exe` is platform-specific
-- the browser launchers are helpful for UI debugging, but Electron remains the primary user-facing mode
 
 ## Recommended repo model
 

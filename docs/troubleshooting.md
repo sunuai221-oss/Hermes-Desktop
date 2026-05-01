@@ -55,5 +55,3 @@ Use:
 
 - `start-hermes-desktop.bat` for normal use
 - `start-hermes-desktop-dev.bat` for Electron development
-
-Use `start-builder.bat` or `start-builder-dev.bat` only when you specifically want a browser-based workflow.
