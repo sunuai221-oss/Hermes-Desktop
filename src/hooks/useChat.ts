@@ -81,6 +81,21 @@ function stopMicrophoneCapture(
   }
 }
 
+function createVoiceAbortError(): Error {
+  const error = new Error('Voice playback interrupted');
+  error.name = 'AbortError';
+  return error;
+}
+
+function isVoiceAbortError(error: unknown): boolean {
+  return Boolean(
+    error
+    && typeof error === 'object'
+    && 'name' in error
+    && String((error as { name?: unknown }).name) === 'AbortError',
+  );
+}
+
 function toReferenceString(ref: ContextReferenceAttachment): string {
   if (ref.kind === 'diff' || ref.kind === 'staged') return `@${ref.kind}`;
   if (ref.kind === 'git') return `@git:${ref.value}`;
@@ -474,6 +489,7 @@ export function useChat({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
+  const voiceSynthesisAbortRef = useRef<AbortController | null>(null);
   const hydrateRequestRef = useRef(0);
   const provider = runtimeProvider === 'profile-default' ? undefined : runtimeProvider;
   const model = preferredModel;
@@ -658,6 +674,28 @@ export function useChat({
     }
   }, [clearAudioUrl]);
 
+  const stopCurrentVoicePlayback = useCallback(() => {
+    if (voiceSynthesisAbortRef.current) {
+      voiceSynthesisAbortRef.current.abort();
+      voiceSynthesisAbortRef.current = null;
+    }
+
+    const audio = audioRef.current;
+    const playingAudioUrl = String(audio?.currentSrc || audio?.src || '').trim();
+    if (audio) {
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+    }
+
+    setSpeakingMessageIndex(null);
+    setVoiceState('idle');
+
+    if (playingAudioUrl) {
+      void releaseAudioUrl(playingAudioUrl);
+    }
+  }, [audioRef, releaseAudioUrl]);
+
   const playAudio = useCallback(async (audioUrl: string) => {
     const audio = audioRef.current;
     if (!audioUrl || !audio) return;
@@ -678,6 +716,50 @@ export function useChat({
     }
   }, [audioRef]);
 
+  const playAudioAndWait = useCallback(async (audioUrl: string, signal?: AbortSignal) => {
+    const audio = audioRef.current;
+    if (!audioUrl || !audio) return;
+    if (signal?.aborted) throw createVoiceAbortError();
+
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = () => {
+        audio.removeEventListener('ended', handleEnded);
+        audio.removeEventListener('error', handleError);
+        signal?.removeEventListener('abort', handleAbort);
+      };
+      const handleEnded = () => {
+        cleanup();
+        resolve();
+      };
+      const handleError = () => {
+        cleanup();
+        void releaseAudioUrl(audioUrl);
+        reject(new Error('Audio playback failed'));
+      };
+      const handleAbort = () => {
+        cleanup();
+        audio.pause();
+        audio.removeAttribute('src');
+        audio.load();
+        void releaseAudioUrl(audioUrl);
+        reject(createVoiceAbortError());
+      };
+
+      audio.pause();
+      audio.addEventListener('ended', handleEnded, { once: true });
+      audio.addEventListener('error', handleError, { once: true });
+      signal?.addEventListener('abort', handleAbort, { once: true });
+      audio.src = audioUrl;
+      audio.load();
+      setVoiceState('speaking');
+      audio.play().catch(error => {
+        cleanup();
+        void releaseAudioUrl(audioUrl);
+        reject(error);
+      });
+    });
+  }, [audioRef, releaseAudioUrl]);
+
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -694,19 +776,85 @@ export function useChat({
     return () => audio.removeEventListener('ended', handler);
   }, [audioRef, releaseAudioUrl]);
 
+  const speakStreamingText = useCallback(async (text: string) => {
+    const controller = new AbortController();
+    if (voiceSynthesisAbortRef.current) {
+      voiceSynthesisAbortRef.current.abort();
+    }
+    voiceSynthesisAbortRef.current = controller;
+
+    try {
+      const response = await apiClient.voice.streamSynthesize(text, { signal: controller.signal });
+      if (!response.ok || !response.body) {
+        throw new Error(`Speech stream failed with HTTP ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let playedAnySegment = false;
+
+      while (true) {
+        const { value, done } = await reader.read();
+        const chunk = value ? decoder.decode(value, { stream: !done }) : '';
+        const parsed = parseSseChunk(buffer, chunk);
+        buffer = parsed.buffer;
+
+        for (const event of parsed.events) {
+          if (event.error) {
+            throw new Error(event.error);
+          }
+          if (event.event !== 'voice.audio' || !event.payload || typeof event.payload !== 'object') {
+            continue;
+          }
+
+          const audioUrl = String((event.payload as { audioUrl?: unknown }).audioUrl || '').trim();
+          if (!audioUrl) continue;
+          playedAnySegment = true;
+          await playAudioAndWait(audioUrl, controller.signal);
+        }
+
+        if (done) break;
+      }
+
+      if (!playedAnySegment) {
+        throw new Error('Speech stream returned no audio segments');
+      }
+    } finally {
+      if (voiceSynthesisAbortRef.current === controller) {
+        voiceSynthesisAbortRef.current = null;
+      }
+    }
+  }, [playAudioAndWait]);
+
+  const speakText = useCallback(async (text: string, cacheAudio?: (audioUrl: string) => void) => {
+    try {
+      await speakStreamingText(text);
+    } catch (error) {
+      if (isVoiceAbortError(error)) return;
+      const response = await apiClient.voice.synthesize(text);
+      cacheAudio?.(response.data.audioUrl);
+      await playAudio(response.data.audioUrl);
+    }
+  }, [playAudio, speakStreamingText]);
+
   const maybeSpeakAssistantReply = useCallback(async (assistantText: string) => {
     if (!voiceMode || !assistantText.trim()) return;
     try {
       setVoiceError(null);
       setVoiceState('processing');
-      const response = await apiClient.voice.synthesize(assistantText);
-      updateLastAssistantMessage(message => ({ ...message, audioUrl: response.data.audioUrl }));
-      await playAudio(response.data.audioUrl);
-    } catch {
+      await speakText(assistantText, audioUrl => {
+        updateLastAssistantMessage(message => ({ ...message, audioUrl }));
+      });
+    } catch (error) {
+      if (isVoiceAbortError(error)) {
+        setVoiceState('idle');
+        return;
+      }
       setVoiceError('Speech synthesis unavailable.');
       setVoiceState('idle');
     }
-  }, [playAudio, updateLastAssistantMessage, voiceMode]);
+  }, [speakText, updateLastAssistantMessage, voiceMode]);
 
   const speakMessageAt = useCallback(async (messageIndex: number, rawText: string) => {
     const text = String(rawText || '').trim();
@@ -727,16 +875,20 @@ export function useChat({
       setVoiceError(null);
       setVoiceState('processing');
       setSpeakingMessageIndex(messageIndex);
-      const response = await apiClient.voice.synthesize(text);
-      updateMessageAtIndex(messageIndex, message => ({ ...message, audioUrl: response.data.audioUrl }));
-      await playAudio(response.data.audioUrl);
-    } catch {
+      await speakText(text, audioUrl => {
+        updateMessageAtIndex(messageIndex, message => ({ ...message, audioUrl }));
+      });
+    } catch (error) {
+      if (isVoiceAbortError(error)) {
+        setVoiceState('idle');
+        return;
+      }
       setVoiceError('Speech synthesis unavailable.');
       setVoiceState('idle');
     } finally {
       setSpeakingMessageIndex(current => (current === messageIndex ? null : current));
     }
-  }, [messages, playAudio, updateMessageAtIndex, voiceState]);
+  }, [messages, playAudio, speakText, updateMessageAtIndex, voiceState]);
 
   const handleMessageAudioEnded = useCallback((audioUrl: string) => {
     void releaseAudioUrl(audioUrl);
@@ -1029,7 +1181,7 @@ export function useChat({
 
       finalAssistantText = accumulated;
       finalAssistantToolCalls = accumulatedToolCalls.length > 0 ? accumulatedToolCalls : undefined;
-      await maybeSpeakAssistantReply(accumulated);
+      void maybeSpeakAssistantReply(accumulated);
     } catch {
       try {
         const response = await apiClient.gateway.chat({
@@ -1062,7 +1214,7 @@ export function useChat({
           toolName: finalAssistantToolName,
           toolResults: finalAssistantToolResults,
         }));
-        await maybeSpeakAssistantReply(content);
+        void maybeSpeakAssistantReply(content);
       } catch {
         finalAssistantText = 'Gateway unreachable. Verify that the Hermes Gateway is running.';
         updateLastAssistantMessage(message => ({ ...message, content: finalAssistantText }));
@@ -1115,8 +1267,9 @@ export function useChat({
   ]);
 
   const handleVoiceToggle = useCallback(async () => {
-    if (streaming || uploadingImages || voiceState === 'processing') return;
+    if (streaming || uploadingImages) return;
     if (voiceState === 'recording') { mediaRecorderRef.current?.stop(); return; }
+    if (voiceState === 'processing' || voiceState === 'speaking') { stopCurrentVoicePlayback(); return; }
     if (!voiceSupported) { setVoiceError('Microphone unavailable in this browser.'); return; }
     try {
       setVoiceError(null);
@@ -1186,7 +1339,7 @@ export function useChat({
       setVoiceError('Microphone access denied or unavailable.');
       setVoiceState('idle');
     }
-  }, [activeSessionId, audioRef, buildAttachedContext, clearPendingAttachments, imageAttachments, messages, model, playAudio, preferredThink, streaming, uploadingImages, voiceState, voiceSupported]);
+  }, [activeSessionId, audioRef, buildAttachedContext, clearPendingAttachments, imageAttachments, messages, model, playAudio, preferredThink, stopCurrentVoicePlayback, streaming, uploadingImages, voiceState, voiceSupported]);
 
   // ── Voice label ─────────────────────────────────────────────
   const voiceStatusLabel = voiceState === 'recording' ? 'Recording...'

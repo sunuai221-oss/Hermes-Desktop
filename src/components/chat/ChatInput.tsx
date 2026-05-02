@@ -251,16 +251,26 @@ export function ChatInput({
           </button>
           <button
             onClick={onVoiceToggle}
-            disabled={streaming || uploadingImages || voiceState === 'processing'}
+            disabled={streaming || uploadingImages}
             className={cn(
               'p-2 rounded-lg transition-colors disabled:opacity-30',
-              voiceState === 'recording'
+              voiceState === 'recording' || voiceState === 'processing' || voiceState === 'speaking'
                 ? 'bg-red-500/10 text-destructive hover:bg-red-500/15'
                 : 'text-muted-foreground hover:text-foreground hover:bg-muted',
             )}
-            title={voiceState === 'recording' ? 'Stop recording' : 'Push-to-talk'}
+            title={
+              voiceState === 'recording'
+                ? 'Stop recording'
+                : voiceState === 'processing'
+                  ? 'Stop voice generation'
+                  : voiceState === 'speaking'
+                    ? 'Stop audio'
+                    : 'Push-to-talk'
+            }
           >
-            {voiceState === 'recording' ? <Square size={15} /> : <Mic size={15} />}
+            {voiceState === 'recording' || voiceState === 'processing' || voiceState === 'speaking'
+              ? <Square size={15} />
+              : <Mic size={15} />}
           </button>
         </div>
 
@@ -332,7 +342,7 @@ export function ChatInput({
               }
             }}
             placeholder="Message Hermes…"
-            disabled={streaming || voiceState === 'recording' || voiceState === 'processing'}
+            disabled={streaming || voiceState === 'recording'}
             rows={1}
             className="w-full resize-none bg-muted/40 border border-border/60 rounded-xl px-4 py-3 pr-12 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/30 transition-all disabled:opacity-50 placeholder:text-muted-foreground/50"
             style={{ maxHeight: '120px' }}

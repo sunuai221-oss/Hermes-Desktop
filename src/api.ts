@@ -37,6 +37,7 @@ const DIRECT_GATEWAY_BASE = (
     : 'http://127.0.0.1:8642')
 ).replace(/\/$/, '');
 const http = axios.create({ baseURL: BASE, timeout: 5000 });
+const voiceHttp = axios.create({ baseURL: BASE, timeout: 180000 });
 const scanHttp = axios.create({ baseURL: BASE, timeout: 60000 });
 
 function attachProfileHeaderInterceptor(client: ReturnType<typeof axios.create>) {
@@ -76,6 +77,7 @@ async function probeDirectGateway(baseUrl = DIRECT_GATEWAY_BASE) {
 
 // Inject X-Hermes-Profile header from localStorage
 attachProfileHeaderInterceptor(http);
+attachProfileHeaderInterceptor(voiceHttp);
 attachProfileHeaderInterceptor(scanHttp);
 
 export const profiles = {
@@ -221,9 +223,21 @@ export const voice = {
     audioDataUrl: string;
     contextText?: string;
     images?: ImageAttachment[];
-  }) => http.post<VoiceChatResponse>('/api/voice/respond', body),
+  }) => voiceHttp.post<VoiceChatResponse>('/api/voice/respond', body),
   synthesize: (text: string) =>
-    http.post<VoiceSynthesisResponse>('/api/voice/synthesize', { text }),
+    voiceHttp.post<VoiceSynthesisResponse>('/api/voice/synthesize', { text }),
+  streamSynthesize: (text: string, options?: { signal?: AbortSignal }) => {
+    const profile = localStorage.getItem('hermes_profile') || 'default';
+    return fetch(`${BASE}/api/voice/synthesize/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Hermes-Profile': profile,
+      },
+      signal: options?.signal,
+      body: JSON.stringify({ text }),
+    });
+  },
   deleteAudio: (fileName: string) =>
-    http.delete(`/api/voice/audio/${encodeURIComponent(fileName)}`),
+    voiceHttp.delete(`/api/voice/audio/${encodeURIComponent(fileName)}`),
 };

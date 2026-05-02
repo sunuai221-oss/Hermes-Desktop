@@ -176,7 +176,15 @@ export interface HermesConfig {
   stt?: { enabled?: boolean };
   tts?: {
     mode?: 'kokoro' | string;
-    provider?: 'kokoro' | string;
+    provider?: 'kokoro' | 'neutts-server' | string;
+    neutts_server?: {
+      base_url?: string;
+      timeout_ms?: number;
+    };
+    neuttsServer?: {
+      baseUrl?: string;
+      timeoutMs?: number;
+    };
     kokoro?: {
       runtime?: {
         base_url?: string;

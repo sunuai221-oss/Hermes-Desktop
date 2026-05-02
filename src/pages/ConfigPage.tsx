@@ -97,7 +97,6 @@ export function ConfigPage() {
   };
 
   const updateTts = (path: string[], value: unknown) => {
-    update(['tts', 'provider'], 'kokoro');
     update(['tts', ...path], value);
   };
 
@@ -174,6 +173,7 @@ export function ConfigPage() {
     );
   }
 
+  const ttsProvider = config.tts?.provider || 'kokoro';
   const kokoroRuntime = config.tts?.kokoro?.runtime ?? {};
   const kokoroPreprocess = config.tts?.kokoro?.preprocess ?? {};
   const kokoroRouting = config.tts?.kokoro?.routing ?? {};
@@ -561,7 +561,49 @@ export function ConfigPage() {
         <Card className="p-6">
           <SectionTitle icon={<Zap size={16} />} title="Speech (TTS)" />
           <div className="space-y-4">
-            <div className="rounded-xl border border-border/50 bg-muted/20 p-3">
+            <div>
+              <label className="mb-2 block text-xs text-muted-foreground">TTS provider</label>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { id: 'kokoro', label: 'Kokoro Docker' },
+                  { id: 'neutts-server', label: 'NeuTTS Server' },
+                ].map(provider => (
+                  <button
+                    key={provider.id}
+                    onClick={() => update(['tts', 'provider'], provider.id)}
+                    className={cn(
+                      'rounded-lg px-3 py-1.5 text-xs font-semibold transition-all',
+                      ttsProvider === provider.id ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted',
+                    )}
+                  >
+                    {provider.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {ttsProvider === 'neutts-server' && (
+              <div className="rounded-xl border border-border/50 bg-muted/20 p-3 space-y-3">
+                <div>
+                  <div className="text-sm font-semibold">NeuTTS server pipeline</div>
+                  <p className="mt-1 text-[11px] text-muted-foreground/70">
+                    Hermes Desktop sends TTS requests to your already-running NeuTTS server via <span className="font-mono">POST /tts</span>. The French model uses the bundled <span className="font-mono">Juliette</span> reference voice.
+                  </p>
+                </div>
+                <div className="rounded-lg bg-background/40 px-3 py-2 text-xs text-muted-foreground">
+                  Voice: <span className="font-mono text-foreground">Juliette</span>
+                </div>
+                <Field
+                  label="NeuTTS server base URL"
+                  value={String((config.tts?.neutts_server as { base_url?: string } | undefined)?.base_url || 'http://127.0.0.1:8020')}
+                  onChange={v => updateTts(['neutts_server', 'base_url'], v.trim() || 'http://127.0.0.1:8020')}
+                />
+              </div>
+            )}
+
+            {ttsProvider === 'kokoro' && (
+              <>
+                <div className="rounded-xl border border-border/50 bg-muted/20 p-3">
               <div className="text-sm font-semibold">Kokoro bilingual pipeline</div>
               <p className="mt-1 text-[11px] text-muted-foreground/70">
                 Hermes sends all TTS requests to your local Kokoro container via
@@ -661,6 +703,8 @@ export function ConfigPage() {
               Example voices: <span className="font-mono">af_bella</span>, <span className="font-mono">am_michael</span>, <span className="font-mono">bf_emma</span>, <span className="font-mono">ff_siwis</span>.
               Check <span className="font-mono">http://127.0.0.1:8880/v1/audio/voices</span> for the full list exposed by Docker.
             </p>
+              </>
+            )}
           </div>
         </Card>
       </div>

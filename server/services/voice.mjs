@@ -54,13 +54,24 @@ function mimeTypeToExtension(mimeType) {
  */
 async function getVoiceConfig(hermes, runtimeFilesService) {
   const config = await runtimeFilesService.readYamlConfig(hermes).catch(() => ({}));
+  const ttsProvider = String(config?.tts?.provider || 'kokoro').trim() || 'kokoro';
+  const neuttsServerConfig = config?.tts?.neutts_server || config?.tts?.neuttsServer || {};
 
   return {
     model: config?.model?.default || 'Qwen3.6-27B-UD-IQ3_XXS',
     think: config?.model?.think ?? 'low',
-    provider: 'kokoro',
+    provider: ttsProvider,
     sttModel: config?.stt?.local?.model || 'base',
     kokoro: normalizeKokoroConfig(config?.tts),
+    neuttsServer: {
+      base_url: String(
+        neuttsServerConfig?.base_url
+        || neuttsServerConfig?.baseUrl
+        || process.env.NEUTTS_SERVER_URL
+        || 'http://127.0.0.1:8020'
+      ).trim().replace(/\/$/, ''),
+      timeout_ms: Number(neuttsServerConfig?.timeout_ms || neuttsServerConfig?.timeoutMs || 180000),
+    },
   };
 }
 
@@ -128,6 +139,10 @@ async function transcribeAudioFile(hermes, inputPath, model, voiceScriptPath) {
  * Synthesize speech via Kokoro TTS.
  */
 async function synthesizeSpeech(hermes, text, voiceConfig) {
+  if (String(voiceConfig?.provider || '').toLowerCase() === 'neutts-server') {
+    return synthesizeSpeechWithNeuTtsServer(hermes, text, voiceConfig);
+  }
+
   const plan = buildSpeechSynthesisPlan(text, voiceConfig.kokoro);
   if (!plan.shapedText || plan.segments.length === 0) {
     throw new Error('No speakable text available');
@@ -203,6 +218,134 @@ async function synthesizeSpeech(hermes, text, voiceConfig) {
   };
 }
 
+/**
+ * Synthesize speech via an already-running NeuTTS HTTP server.
+ */
+async function synthesizeSpeechWithNeuTtsServer(hermes, text, voiceConfig) {
+  const speakableText = normalizeTextForNeuTts(text);
+  if (!speakableText) {
+    throw new Error('No speakable text available');
+  }
+
+  await ensureVoiceDir(hermes);
+  const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const baseUrl = String(voiceConfig?.neuttsServer?.base_url || 'http://127.0.0.1:8020').trim().replace(/\/$/, '');
+  const timeout = Number(voiceConfig?.neuttsServer?.timeout_ms || 180000);
+  if (!baseUrl) {
+    throw new Error('NeuTTS server base URL is missing. Set tts.neutts_server.base_url in config.yaml.');
+  }
+
+  const segments = splitTextForNeuTts(speakableText);
+  const segmentBuffers = [];
+  for (const [index, segment] of segments.entries()) {
+    segmentBuffers.push(await requestNeuTtsWavBuffer({
+      hermes,
+      baseUrl,
+      text: segment,
+      timeout,
+      id: `${id}_${index}`,
+    }));
+  }
+
+  const wavBuffer = segmentBuffers.length === 1
+    ? segmentBuffers[0]
+    : concatenateWavBuffers(segmentBuffers, {
+      gap_ms: 140,
+      trim_segment_edges: true,
+    });
+
+  const fileName = `${id}_neutts.wav`;
+  const outputPath = path.join(hermes.paths.voice, fileName);
+  await fs.promises.writeFile(outputPath, wavBuffer);
+
+  return {
+    audioUrl: `/api/voice/audio/${fileName}?profile=${encodeURIComponent(String(hermes.profile || 'default'))}`,
+    fileName,
+    voice: `neutts-server:${segments.length}`,
+    text: speakableText,
+  };
+}
+
+async function* synthesizeSpeechSegments(hermes, text, voiceConfig) {
+  if (String(voiceConfig?.provider || '').toLowerCase() !== 'neutts-server') {
+    yield {
+      ...(await synthesizeSpeech(hermes, text, voiceConfig)),
+      index: 0,
+      total: 1,
+    };
+    return;
+  }
+
+  const speakableText = normalizeTextForNeuTts(text);
+  if (!speakableText) {
+    throw new Error('No speakable text available');
+  }
+
+  await ensureVoiceDir(hermes);
+  const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const baseUrl = String(voiceConfig?.neuttsServer?.base_url || 'http://127.0.0.1:8020').trim().replace(/\/$/, '');
+  const timeout = Number(voiceConfig?.neuttsServer?.timeout_ms || 180000);
+  if (!baseUrl) {
+    throw new Error('NeuTTS server base URL is missing. Set tts.neutts_server.base_url in config.yaml.');
+  }
+
+  const segments = splitTextForNeuTts(speakableText);
+  for (const [index, segment] of segments.entries()) {
+    const wavBuffer = await requestNeuTtsWavBuffer({
+      hermes,
+      baseUrl,
+      text: segment,
+      timeout,
+      id: `${id}_${index}`,
+    });
+    const fileName = `${id}_${index}_neutts.wav`;
+    const outputPath = path.join(hermes.paths.voice, fileName);
+    await fs.promises.writeFile(outputPath, wavBuffer);
+
+    yield {
+      audioUrl: `/api/voice/audio/${fileName}?profile=${encodeURIComponent(String(hermes.profile || 'default'))}`,
+      fileName,
+      voice: `neutts-server:${index + 1}/${segments.length}`,
+      text: segment,
+      index,
+      total: segments.length,
+    };
+  }
+}
+
+async function requestNeuTtsWavBuffer({ hermes, baseUrl, text, timeout, id }) {
+  const response = await axios.post(`${baseUrl}/tts`, { text }, {
+    headers: { 'Content-Type': 'application/json' },
+    responseType: 'arraybuffer',
+    timeout,
+  });
+
+  const audioBuffer = Buffer.from(response?.data || []);
+  if (!audioBuffer.length) {
+    throw new Error('NeuTTS server returned an empty audio response.');
+  }
+
+  if (looksLikeJsonPayload(audioBuffer)) {
+    throw new Error('NeuTTS server returned JSON instead of audio. Check NeuTTS logs for upstream errors.');
+  }
+
+  const rawExtension = detectAudioExtension(response?.headers?.['content-type'], audioBuffer);
+  const rawFileName = `${id}_neutts_raw.${rawExtension}`;
+  const rawPath = path.join(hermes.paths.voice, rawFileName);
+  await fs.promises.writeFile(rawPath, audioBuffer);
+
+  const outputPath = path.join(hermes.paths.voice, `${id}_neutts_segment.wav`);
+  if (rawExtension === 'wav') {
+    fs.promises.unlink(rawPath).catch(() => {});
+    return audioBuffer;
+  } else {
+    await transcodeAudioWithFfmpeg(rawPath, outputPath);
+    fs.promises.unlink(rawPath).catch(() => {});
+    const wavBuffer = await fs.promises.readFile(outputPath);
+    fs.promises.unlink(outputPath).catch(() => {});
+    return wavBuffer;
+  }
+}
 
 
 /**
@@ -225,8 +368,81 @@ async function transcodeAudioWithFfmpeg(inputPath, outputPath) {
       maxBuffer: 20 * 1024 * 1024,
     });
   } catch (error) {
-    throw new Error(`ffmpeg could not convert Kokoro output: ${error.message}`);
+    throw new Error(`ffmpeg could not convert audio output: ${error.message}`);
   }
+}
+
+function normalizeTextForNeuTts(text) {
+  return sanitizeTextForSpeech(text)
+    .replace(/\p{Extended_Pictographic}/gu, ' ')
+    .replace(/[•◦▪●○◆◇■□]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function splitTextForNeuTts(text, maxChars = 180) {
+  const normalized = String(text || '').trim();
+  if (!normalized) return [];
+
+  const clauses = normalized
+    .replace(/\s*([.!?;])\s*/g, '$1\n')
+    .split(/\n+/)
+    .map(part => part.trim())
+    .filter(Boolean);
+
+  const segments = [];
+  for (const clause of clauses) {
+    if (clause.length <= maxChars) {
+      segments.push(clause);
+      continue;
+    }
+
+    const words = clause.split(/\s+/);
+    let current = '';
+    for (const word of words) {
+      const next = current ? `${current} ${word}` : word;
+      if (next.length > maxChars && current) {
+        segments.push(ensureSentenceEnding(current));
+        current = word;
+      } else {
+        current = next;
+      }
+    }
+    if (current) segments.push(ensureSentenceEnding(current));
+  }
+
+  return segments;
+}
+
+function ensureSentenceEnding(text) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return '';
+  return /[.!?;:]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+function looksLikeJsonPayload(buffer) {
+  const preview = buffer.subarray(0, 64).toString('utf8').trimStart();
+  return preview.startsWith('{') || preview.startsWith('[');
+}
+
+function detectAudioExtension(contentType, buffer) {
+  const normalizedType = String(contentType || '').toLowerCase();
+  if (normalizedType) {
+    if (normalizedType.includes('wav')) return 'wav';
+    if (normalizedType.includes('mpeg') || normalizedType.includes('mp3')) return 'mp3';
+    if (normalizedType.includes('ogg')) return 'ogg';
+    if (normalizedType.includes('webm')) return 'webm';
+    if (normalizedType.includes('flac')) return 'flac';
+    if (normalizedType.includes('mp4') || normalizedType.includes('m4a')) return 'm4a';
+  }
+
+  const signature = buffer.subarray(0, 16);
+  if (signature.length >= 12 && signature.toString('ascii', 0, 4) === 'RIFF' && signature.toString('ascii', 8, 12) === 'WAVE') return 'wav';
+  if (signature.length >= 4 && signature.toString('ascii', 0, 4) === 'OggS') return 'ogg';
+  if (signature.length >= 4 && signature.toString('ascii', 0, 4) === 'fLaC') return 'flac';
+  if (signature.length >= 3 && signature.toString('ascii', 0, 3) === 'ID3') return 'mp3';
+  if (signature.length >= 2 && signature[0] === 0xff && (signature[1] & 0xe0) === 0xe0) return 'mp3';
+  return 'wav';
 }
 
 
@@ -261,6 +477,8 @@ export {
   runVoiceTool,
   transcribeAudioFile,
   synthesizeSpeech,
+  synthesizeSpeechWithNeuTtsServer,
+  synthesizeSpeechSegments,
   transcodeAudioWithFfmpeg,
   extractAssistantText,
   ensureVoiceDir,

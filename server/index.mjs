@@ -121,6 +121,7 @@ import {
   runVoiceTool,
   transcribeAudioFile,
   synthesizeSpeech,
+  synthesizeSpeechSegments,
   transcodeAudioWithFfmpeg,
   extractAssistantText,
   ensureVoiceDir,
@@ -557,6 +558,37 @@ app.post('/api/voice/synthesize', async (req, res) => {
 // ── Context Files Routes ────────────────────────────────────────────
 
 // Delete generated TTS files once playback is complete on the client.
+app.post('/api/voice/synthesize/stream', async (req, res) => {
+  const text = sanitizeTextForSpeech(String(req.body?.text || ''));
+  if (!text) {
+    return res.status(400).json({ error: 'text is required' });
+  }
+
+  const sendEvent = (event, payload) => {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  };
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  try {
+    const voiceConfig = await getVoiceConfig(req.hermes, runtimeFilesService);
+    let count = 0;
+    for await (const synthesized of synthesizeSpeechSegments(req.hermes, text, voiceConfig)) {
+      count += 1;
+      sendEvent('voice.audio', synthesized);
+    }
+    sendEvent('done', { ok: true, count });
+  } catch (error) {
+    sendEvent('error', { error: 'Could not synthesize voice reply', details: error.message });
+  } finally {
+    res.end();
+  }
+});
+
 app.delete('/api/voice/audio/:fileName', async (req, res) => {
   try {
     const requestedFileName = String(req.params?.fileName || '').trim();
