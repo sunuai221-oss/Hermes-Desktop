@@ -776,7 +776,63 @@ export function useChat({
     return () => audio.removeEventListener('ended', handler);
   }, [audioRef, releaseAudioUrl]);
 
-  const speakStreamingText = useCallback(async (text: string) => {
+  const speakStreamingText = useCallback(async (text: string, signal?: AbortSignal) => {
+    if (signal?.aborted) throw createVoiceAbortError();
+
+    const response = await apiClient.voice.streamSynthesize(text, { signal });
+    if (!response.ok || !response.body) {
+      throw new Error(`Speech stream failed with HTTP ${response.status}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let playedAnySegment = false;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      const chunk = value ? decoder.decode(value, { stream: !done }) : '';
+      const parsed = parseSseChunk(buffer, chunk);
+      buffer = parsed.buffer;
+
+      for (const event of parsed.events) {
+        if (event.error) {
+          throw new Error(event.error);
+        }
+        if (event.event !== 'voice.audio' || !event.payload || typeof event.payload !== 'object') {
+          continue;
+        }
+
+        const audioUrl = String((event.payload as { audioUrl?: unknown }).audioUrl || '').trim();
+        if (!audioUrl) continue;
+        playedAnySegment = true;
+        await playAudioAndWait(audioUrl, signal);
+      }
+
+      if (done) break;
+    }
+
+    if (!playedAnySegment) {
+      throw new Error('Speech stream returned no audio segments');
+    }
+  }, [playAudioAndWait]);
+
+  const speakText = useCallback(async (
+    text: string,
+    options?: { cacheAudio?: (audioUrl: string) => void; signal?: AbortSignal },
+  ) => {
+    try {
+      await speakStreamingText(text, options?.signal);
+    } catch (error) {
+      if (isVoiceAbortError(error)) return;
+      const response = await apiClient.voice.synthesize(text);
+      options?.cacheAudio?.(response.data.audioUrl);
+      await playAudioAndWait(response.data.audioUrl, options?.signal);
+    }
+  }, [playAudioAndWait, speakStreamingText]);
+
+  const maybeSpeakAssistantReply = useCallback(async (assistantText: string) => {
+    if (!voiceMode || !assistantText.trim()) return;
     const controller = new AbortController();
     if (voiceSynthesisAbortRef.current) {
       voiceSynthesisAbortRef.current.abort();
@@ -784,67 +840,13 @@ export function useChat({
     voiceSynthesisAbortRef.current = controller;
 
     try {
-      const response = await apiClient.voice.streamSynthesize(text, { signal: controller.signal });
-      if (!response.ok || !response.body) {
-        throw new Error(`Speech stream failed with HTTP ${response.status}`);
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let playedAnySegment = false;
-
-      while (true) {
-        const { value, done } = await reader.read();
-        const chunk = value ? decoder.decode(value, { stream: !done }) : '';
-        const parsed = parseSseChunk(buffer, chunk);
-        buffer = parsed.buffer;
-
-        for (const event of parsed.events) {
-          if (event.error) {
-            throw new Error(event.error);
-          }
-          if (event.event !== 'voice.audio' || !event.payload || typeof event.payload !== 'object') {
-            continue;
-          }
-
-          const audioUrl = String((event.payload as { audioUrl?: unknown }).audioUrl || '').trim();
-          if (!audioUrl) continue;
-          playedAnySegment = true;
-          await playAudioAndWait(audioUrl, controller.signal);
-        }
-
-        if (done) break;
-      }
-
-      if (!playedAnySegment) {
-        throw new Error('Speech stream returned no audio segments');
-      }
-    } finally {
-      if (voiceSynthesisAbortRef.current === controller) {
-        voiceSynthesisAbortRef.current = null;
-      }
-    }
-  }, [playAudioAndWait]);
-
-  const speakText = useCallback(async (text: string, cacheAudio?: (audioUrl: string) => void) => {
-    try {
-      await speakStreamingText(text);
-    } catch (error) {
-      if (isVoiceAbortError(error)) return;
-      const response = await apiClient.voice.synthesize(text);
-      cacheAudio?.(response.data.audioUrl);
-      await playAudio(response.data.audioUrl);
-    }
-  }, [playAudio, speakStreamingText]);
-
-  const maybeSpeakAssistantReply = useCallback(async (assistantText: string) => {
-    if (!voiceMode || !assistantText.trim()) return;
-    try {
       setVoiceError(null);
       setVoiceState('processing');
-      await speakText(assistantText, audioUrl => {
-        updateLastAssistantMessage(message => ({ ...message, audioUrl }));
+      await speakText(assistantText, {
+        signal: controller.signal,
+        cacheAudio: audioUrl => {
+          updateLastAssistantMessage(message => ({ ...message, audioUrl }));
+        },
       });
     } catch (error) {
       if (isVoiceAbortError(error)) {
@@ -853,30 +855,43 @@ export function useChat({
       }
       setVoiceError('Speech synthesis unavailable.');
       setVoiceState('idle');
+    } finally {
+      if (voiceSynthesisAbortRef.current === controller) {
+        voiceSynthesisAbortRef.current = null;
+      }
     }
   }, [speakText, updateLastAssistantMessage, voiceMode]);
 
   const speakMessageAt = useCallback(async (messageIndex: number, rawText: string) => {
     const text = String(rawText || '').trim();
     if (!text) return;
-    if (voiceState === 'recording' || voiceState === 'processing') return;
-    const cachedAudioUrl = messages[messageIndex]?.audioUrl;
-    if (cachedAudioUrl) {
-      try {
-        setVoiceError(null);
-        setSpeakingMessageIndex(messageIndex);
-        await playAudio(cachedAudioUrl);
-      } finally {
-        setSpeakingMessageIndex(current => (current === messageIndex ? null : current));
-      }
+    if (speakingMessageIndex === messageIndex && (voiceState === 'processing' || voiceState === 'speaking')) {
+      stopCurrentVoicePlayback();
       return;
     }
+    if (voiceState === 'recording') return;
+
+    const controller = new AbortController();
+    if (voiceSynthesisAbortRef.current) {
+      voiceSynthesisAbortRef.current.abort();
+    }
+    voiceSynthesisAbortRef.current = controller;
+
+    const cachedAudioUrl = messages[messageIndex]?.audioUrl;
     try {
       setVoiceError(null);
-      setVoiceState('processing');
       setSpeakingMessageIndex(messageIndex);
-      await speakText(text, audioUrl => {
-        updateMessageAtIndex(messageIndex, message => ({ ...message, audioUrl }));
+      if (cachedAudioUrl) {
+        await playAudioAndWait(cachedAudioUrl, controller.signal);
+        return;
+      }
+
+      setVoiceState('processing');
+      await speakText(text, {
+        signal: controller.signal,
+        cacheAudio: audioUrl => {
+          updateMessageAtIndex(messageIndex, message => ({ ...message, audioUrl }));
+        },
       });
     } catch (error) {
       if (isVoiceAbortError(error)) {
@@ -886,9 +901,12 @@ export function useChat({
       setVoiceError('Speech synthesis unavailable.');
       setVoiceState('idle');
     } finally {
+      if (voiceSynthesisAbortRef.current === controller) {
+        voiceSynthesisAbortRef.current = null;
+      }
       setSpeakingMessageIndex(current => (current === messageIndex ? null : current));
     }
-  }, [messages, playAudio, speakText, updateMessageAtIndex, voiceState]);
+  }, [messages, playAudioAndWait, speakText, speakingMessageIndex, stopCurrentVoicePlayback, updateMessageAtIndex, voiceState]);
 
   const handleMessageAudioEnded = useCallback((audioUrl: string) => {
     void releaseAudioUrl(audioUrl);

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bot, Check, Copy, KeyRound, Loader2, Mic, User, Volume2 } from 'lucide-react';
+import { Bot, Check, Copy, KeyRound, Mic, Square, User, Volume2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { Message } from '../../types';
 
@@ -113,21 +113,23 @@ export function ChatMessages({
           <div
             key={index}
             className={cn(
-              'flex gap-3 max-w-[85%] animate-fade-in',
+              'group flex max-w-[85%] items-start gap-2.5 animate-fade-in',
               message.role === 'user' ? 'ml-auto flex-row-reverse' : 'mr-auto',
             )}
           >
             <div className={cn(
-              'w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0',
-              message.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground',
+              'mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md',
+              message.role === 'user'
+                ? 'bg-primary/90 text-primary-foreground'
+                : 'border border-border/40 bg-background/20 text-muted-foreground/80',
             )}>
-              {message.role === 'user' ? <User size={16} /> : <Bot size={16} />}
+              {message.role === 'user' ? <User size={13} /> : <Bot size={13} />}
             </div>
             <div className={cn(
-              'px-4 py-3 rounded-lg text-sm leading-relaxed',
+              'text-sm leading-relaxed',
               message.role === 'user'
-                ? 'bg-primary/15 border border-primary/15 text-foreground'
-                : 'bg-muted/50 border border-border text-foreground',
+                ? 'px-1 py-0.5 text-foreground'
+                : 'px-1 py-0.5 text-foreground',
             )}>
               {(() => {
                 const isStreamingAssistant = streaming && index === messages.length - 1 && message.role === 'assistant';
@@ -137,7 +139,7 @@ export function ChatMessages({
                 return (
                   <>
                     {message.isVoice && (
-                      <div className="mb-2 inline-flex items-center gap-1 rounded-full bg-muted px-2 py-1 text-[10px] text-muted-foreground">
+                      <div className="mb-2 inline-flex items-center gap-1 rounded-full border border-border/40 bg-background/20 px-1.5 py-0.5 text-[10px] text-muted-foreground/80">
                         <Mic size={10} />
                         Voice
                       </div>
@@ -154,25 +156,23 @@ export function ChatMessages({
                       />
                     )}
                     {hasMessageText && (
-                      <div className="mt-3 flex items-center gap-1.5">
+                      <div className="mt-2 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
                         <button
                           onClick={() => void handleCopyMessage(index, message.content)}
-                          className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-background/40 px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-                          title="Copy message"
-                          aria-label="Copy message"
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-transparent bg-transparent text-muted-foreground/70 hover:border-border/60 hover:bg-background/40 hover:text-foreground transition-colors"
+                          title={copiedMessageIndex === index ? 'Copied' : 'Copy message'}
+                          aria-label={copiedMessageIndex === index ? 'Copied' : 'Copy message'}
                         >
-                          {copiedMessageIndex === index ? <Check size={12} /> : <Copy size={12} />}
-                          <span>{copiedMessageIndex === index ? 'Copied' : 'Copy'}</span>
+                          {copiedMessageIndex === index ? <Check size={11} /> : <Copy size={11} />}
                         </button>
                         <button
                           onClick={() => handleSpeakMessage(index, message.content)}
                           disabled={!onSpeakMessage || isStreamingAssistant}
-                          className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-background/40 px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
-                          title={isSpeaking ? 'Synthesizing...' : 'Speak message'}
-                          aria-label="Speak message"
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-transparent bg-transparent text-muted-foreground/70 hover:border-border/60 hover:bg-background/40 hover:text-foreground transition-colors disabled:opacity-40"
+                          title={isSpeaking ? 'Stop audio' : 'Speak message'}
+                          aria-label={isSpeaking ? 'Stop audio' : 'Speak message'}
                         >
-                          {isSpeaking ? <Loader2 size={12} className="animate-spin" /> : <Volume2 size={12} />}
-                          <span>{isSpeaking ? 'Speaking...' : 'Speak'}</span>
+                          {isSpeaking ? <Square size={11} /> : <Volume2 size={11} />}
                         </button>
                       </div>
                     )}
