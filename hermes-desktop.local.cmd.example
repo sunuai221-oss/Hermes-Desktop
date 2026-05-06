@@ -17,5 +17,5 @@ set "HERMES_HOME=\\wsl.localhost\Ubuntu\home\your-user\.hermes"
 
 REM Optional port overrides.
 set "HERMES_GATEWAY_PORT=8642"
-set "HERMES_DESKTOP_PORT=3130"
-set "HERMES_DESKTOP_DEV_PORT=3131"
+set "HERMES_DESKTOP_PORT=3020"
+set "HERMES_DESKTOP_DEV_PORT=3020"

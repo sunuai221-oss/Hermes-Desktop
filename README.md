@@ -155,9 +155,10 @@ Do not edit committed launchers for machine-specific paths. Use a local override
 
 Preferred setup:
 
-1. copy `hermes-desktop.local.cmd.example` to `hermes-desktop.local.cmd`
-2. set only the values your machine needs
-3. keep `hermes-desktop.local.cmd` untracked
+1. try the committed launcher defaults first
+2. if your WSL setup differs, copy `hermes-desktop.local.cmd.example` to `hermes-desktop.local.cmd`
+3. set only the values your machine needs
+4. keep `hermes-desktop.local.cmd` untracked
 
 Most useful variables:
 

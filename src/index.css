@@ -101,6 +101,16 @@
     background-attachment: fixed;
   }
   ::selection { background: hsl(var(--brand-amber) / 0.24); }
+  .dark select { color-scheme: dark; }
+  .dark select option,
+  .dark select optgroup {
+    background-color: hsl(var(--popover));
+    color: hsl(var(--popover-foreground));
+  }
+  .dark select option:checked {
+    background-color: hsl(var(--accent));
+    color: hsl(var(--accent-foreground));
+  }
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 4px; }

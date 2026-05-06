@@ -203,6 +203,7 @@ export const skills = {
   create: (payload: { name: string; description?: string; category?: string }) => http.post('/api/skills', payload),
   getContent: (filePath: string) => http.get('/api/skills/content', { params: { path: filePath } }),
   save: (filePath: string, content: string) => http.put('/api/skills', { path: filePath, content }),
+  setEnabled: (filePath: string, enabled: boolean) => http.patch('/api/skills/enabled', { path: filePath, enabled }),
   delete: (filePath: string) => http.delete('/api/skills', { data: { path: filePath } }),
 };
 

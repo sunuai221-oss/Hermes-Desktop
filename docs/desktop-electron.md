@@ -25,6 +25,12 @@ Use these launchers according to the workflow you want:
 
 ## Desktop startup flow
 
+## Port map
+
+- `3020`: Hermes Desktop backend. Electron loads this URL, and API calls use this same origin.
+- `3030`: standalone Vite frontend dev server only, used by `npm run dev:vite`.
+- `8642`: Hermes gateway in WSL.
+
 ### Standard desktop
 
 `start-hermes-desktop.bat` does the following:
@@ -33,7 +39,7 @@ Use these launchers according to the workflow you want:
 2. verifies the Windows Electron binary exists
 3. starts the Hermes gateway in WSL if it is not already healthy
 4. builds `dist/` if the frontend bundle is missing
-5. launches Electron on port `3130` by default
+5. launches Electron on port `3020` by default
 
 ### Desktop dev
 
@@ -42,7 +48,7 @@ Use these launchers according to the workflow you want:
 1. loads optional local overrides
 2. verifies the Windows Electron binary exists
 3. ensures the Hermes gateway is reachable
-4. launches Electron in dev mode on port `3131` by default
+4. launches Electron in dev mode on port `3020` by default
 
 ## Fresh clone setup
 
@@ -57,11 +63,13 @@ This installs both:
 - the root dependencies for the frontend and Electron shell
 - the backend dependencies under `server/`
 
-For most users, the next step is to copy `hermes-desktop.local.cmd.example` to `hermes-desktop.local.cmd`, adjust it only if needed, and launch `start-hermes-desktop.bat`.
+Then launch `start-hermes-desktop.bat`. The launcher uses `Ubuntu`, `$HOME/.hermes`, and `~/.local/bin/hermes` by default, so no local override is required on a standard setup.
+
+If your WSL distro, Hermes home, or Hermes CLI path is different, copy `hermes-desktop.local.cmd.example` to `hermes-desktop.local.cmd` and set only the values your machine needs.
 
 ## WSL configuration
 
-The launchers are intentionally generic. Machine-specific values belong in an ignored local file:
+The launchers are intentionally generic and auto-detect the common WSL layout. Machine-specific values belong in an ignored local file:
 
 - copy `hermes-desktop.local.cmd.example`
 - rename it to `hermes-desktop.local.cmd`
@@ -119,7 +127,7 @@ This checks:
 - Windows Electron binary presence (and detects Linux/WSL Electron mismatch)
 - configured WSL distro availability
 - gateway health on `http://127.0.0.1:8642`
-- backend health on `http://127.0.0.1:3130/api/desktop/health`
+- backend health on `http://127.0.0.1:3020/api/desktop/health`
 
 Notes:
 

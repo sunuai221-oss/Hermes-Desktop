@@ -225,6 +225,12 @@ async function getHermesContext(profileName) {
   const profileGatewayHost = normalizeGatewayHost(env.API_SERVER_HOST || sharedGateway.host);
   const profileGateway = buildGatewayTarget(profileGatewayHost, profileGatewayPort);
 
+  let gatewayApiKey = process.env.API_SERVER_KEY || env.API_SERVER_KEY || '';
+  if (!gatewayApiKey && profileName && profileName !== 'default') {
+    const defaultEnv = await readEnvFile(path.join(HERMES_BASE, '.env'));
+    gatewayApiKey = defaultEnv.API_SERVER_KEY || '';
+  }
+
   return {
     ...baseContext,
     gatewayUrl: profileGateway.url,
@@ -233,16 +239,45 @@ async function getHermesContext(profileName) {
     sharedGatewayUrl: sharedGateway.url,
     sharedGatewayPort: sharedGateway.port,
     sharedGatewayHost: sharedGateway.host,
-    gatewayApiKey: process.env.API_SERVER_KEY || env.API_SERVER_KEY || '',
+    gatewayApiKey,
   };
 }
 
 async function readHermesEnv(hermes) {
+  return readEnvFile(hermes.paths.env);
+}
+
+async function readEnvFile(envPath) {
   try {
-    const data = await fs.readFile(hermes.paths.env, 'utf-8');
+    const data = await fs.readFile(envPath, 'utf-8');
     return parseDotEnv(data);
   } catch {
-    return {};
+    const fallback = await readHermesEnvViaWsl(envPath);
+    return fallback || {};
+  }
+}
+
+async function readHermesEnvViaWsl(envPath) {
+  try {
+    const unc = parseWslUncPath(envPath);
+    if (!unc?.linuxPath || !unc?.distro) return null;
+
+    const envPathQuoted = quoteBash(unc.linuxPath);
+    const command = `if [ -f ${envPathQuoted} ]; then cat ${envPathQuoted}; fi`;
+    const { stdout } = await execFileAsync(
+      'wsl.exe',
+      ['-d', unc.distro, '-e', 'bash', '-lc', command],
+      {
+        cwd: process.cwd(),
+        windowsHide: true,
+        maxBuffer: 512 * 1024,
+      }
+    );
+    const raw = String(stdout || '').trim();
+    if (!raw) return null;
+    return parseDotEnv(raw);
+  } catch {
+    return null;
   }
 }
 
@@ -974,12 +1009,21 @@ async function installFrontend() {
       extensions: ['html'],
     }));
 
-    app.get('*', (req, res, next) => {
+    app.get(/.*/, (req, res, next) => {
       if (req.path.startsWith('/api/')) return next();
       if (path.extname(req.path)) {
         return res.status(404).end();
       }
-      res.sendFile(BUILDER_DIST_INDEX);
+      res.sendFile('index.html', { root: BUILDER_DIST_DIR }, (error) => {
+        if (!error) return;
+        if (error.code === 'ENOENT') {
+          res.status(503).type('text/plain').send(
+            'Hermes Desktop frontend bundle is missing. Run "npm run build" in the repository root before opening the app.'
+          );
+          return;
+        }
+        next(error);
+      });
     });
     return;
   }

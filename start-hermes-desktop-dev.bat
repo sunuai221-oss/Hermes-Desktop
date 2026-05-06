@@ -15,13 +15,14 @@ if exist "%ROOT%\hermes-desktop.local.cmd" (
   call "%ROOT%\hermes-builder.local.cmd"
 )
 if not defined HERMES_GATEWAY_PORT set "HERMES_GATEWAY_PORT=8642"
-if not defined HERMES_DESKTOP_DEV_PORT set "HERMES_DESKTOP_DEV_PORT=3131"
+if not defined HERMES_DESKTOP_DEV_PORT set "HERMES_DESKTOP_DEV_PORT=3020"
 set "GATEWAY_BASE_URL=http://127.0.0.1:%HERMES_GATEWAY_PORT%"
 set "DESKTOP_PORT=%HERMES_DESKTOP_DEV_PORT%"
 set "DESKTOP_HEALTH_URL=http://127.0.0.1:%DESKTOP_PORT%/api/desktop/health"
 set "ELECTRON_CMD=%ROOT%\node_modules\.bin\electron.cmd"
 set "ELECTRON_EXE=%ROOT%\node_modules\electron\dist\electron.exe"
 set "ELECTRON_LINUX=%ROOT%\node_modules\electron\dist\electron"
+set "SERVER_EXPRESS_PKG=%ROOT%\server\node_modules\express\package.json"
 
 echo [0/4] Checking desktop dependencies...
 call :ensure_desktop_deps
@@ -68,7 +69,7 @@ endlocal
 exit /b 1
 
 :ensure_desktop_deps
-if exist "%ELECTRON_CMD%" if exist "%ELECTRON_EXE%" exit /b 0
+if exist "%ELECTRON_CMD%" if exist "%ELECTRON_EXE%" if exist "%SERVER_EXPRESS_PKG%" exit /b 0
 if exist "%ELECTRON_LINUX%" (
   echo      Dependencies detected, but Electron is the Linux/WSL version.
 ) else (
@@ -78,9 +79,13 @@ echo      Automatically installing Windows dependencies via npm install...
 pushd "%ROOT%"
 call npm.cmd install
 set "INSTALL_EXIT=%ERRORLEVEL%"
+if "%INSTALL_EXIT%"=="0" (
+  call npm.cmd run install:server
+  set "INSTALL_EXIT=%ERRORLEVEL%"
+)
 popd
 if not "%INSTALL_EXIT%"=="0" exit /b 1
-if exist "%ELECTRON_CMD%" if exist "%ELECTRON_EXE%" exit /b 0
+if exist "%ELECTRON_CMD%" if exist "%ELECTRON_EXE%" if exist "%SERVER_EXPRESS_PKG%" exit /b 0
 exit /b 1
 
 :check_gateway

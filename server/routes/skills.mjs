@@ -44,6 +44,15 @@ export function registerSkillRoutes({ app, skillsService }) {
     }
   });
 
+  app.patch('/api/skills/enabled', async (req, res) => {
+    try {
+      const updated = await skillsService.updateSkillEnabled(req.hermes, req.body || {});
+      res.json({ success: true, ...updated });
+    } catch (error) {
+      respondWithRouteError(res, error, 'Could not update skill enabled state');
+    }
+  });
+
   app.delete('/api/skills', async (req, res) => {
     try {
       const removed = await skillsService.deleteLocalSkill(

@@ -30,7 +30,7 @@ after(async () => {
 test('isAllowedOrigin only accepts loopback browser origins', () => {
   assert.equal(isAllowedOrigin(undefined), true);
   assert.equal(isAllowedOrigin('http://localhost:3030'), true);
-  assert.equal(isAllowedOrigin('http://127.0.0.1:3130'), true);
+  assert.equal(isAllowedOrigin('http://127.0.0.1:3020'), true);
   assert.equal(isAllowedOrigin('http://[::1]:8642'), true);
   assert.equal(isAllowedOrigin('https://example.com'), false);
   assert.equal(isAllowedOrigin('not-a-url'), false);

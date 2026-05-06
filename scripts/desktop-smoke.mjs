@@ -12,7 +12,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 const DISTRO = process.env.HERMES_WSL_DISTRO || 'Ubuntu';
 const GATEWAY_PORT = Number(process.env.HERMES_GATEWAY_PORT || 8642);
-const BACKEND_PORT = Number(process.env.HERMES_DESKTOP_BACKEND_PORT || process.env.HERMES_DESKTOP_PORT || 3130);
+const BACKEND_PORT = Number(process.env.HERMES_DESKTOP_BACKEND_PORT || process.env.HERMES_DESKTOP_PORT || 3020);
 
 const gatewayBase = `http://127.0.0.1:${GATEWAY_PORT}`;
 const backendHealthUrl = `http://127.0.0.1:${BACKEND_PORT}/api/desktop/health`;
@@ -69,6 +69,22 @@ async function checkElectronBinary() {
     false,
     'Electron dependency is missing',
     'Run `npm install` from Windows in this repository.',
+  );
+}
+
+async function checkServerDependencies() {
+  const expressPackage = path.join(ROOT, 'server', 'node_modules', 'express', 'package.json');
+
+  if (fs.existsSync(expressPackage)) {
+    pushCheck('Server dependencies', true, 'server/node_modules detected');
+    return;
+  }
+
+  pushCheck(
+    'Server dependencies',
+    false,
+    'server dependencies are missing',
+    'Run `npm run setup`, or `npm run install:server` if root dependencies are already installed.',
   );
 }
 
@@ -164,6 +180,7 @@ function printReport() {
 
 async function main() {
   await checkElectronBinary();
+  await checkServerDependencies();
   await checkWslDistro();
   await checkGatewayHealth();
   await checkDesktopBackend();

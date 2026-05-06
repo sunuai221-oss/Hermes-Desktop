@@ -107,6 +107,45 @@ metadata:
   });
 });
 
+test('skills service applies disabled config and toggles local skills', async () => {
+  await withSkillsWorkspace(async ({ hermes }) => {
+    await skillsService.createLocalSkill(hermes, {
+      name: 'Toggle Me',
+      description: 'Can be disabled.',
+      category: 'Controls',
+    });
+
+    let skills = await skillsService.listSkills(hermes);
+    const skill = skills.find(item => item.name === 'Toggle Me');
+    assert.equal(skill?.id, 'controls/toggle-me');
+    assert.equal(skill?.enabled, true);
+
+    await skillsService.updateSkillEnabled(hermes, {
+      path: skill.path,
+      enabled: false,
+    });
+
+    skills = await skillsService.listSkills(hermes);
+    const disabled = skills.find(item => item.name === 'Toggle Me');
+    assert.equal(disabled?.enabled, false);
+    assert.equal(disabled?.disabledReason, 'disabled in config.yaml');
+
+    const configRaw = await fs.readFile(hermes.paths.config, 'utf-8');
+    const config = yaml.parse(configRaw);
+    assert.deepEqual(config.skills.disabled, ['controls/toggle-me']);
+
+    await skillsService.updateSkillEnabled(hermes, {
+      path: skill.path,
+      enabled: true,
+    });
+
+    skills = await skillsService.listSkills(hermes);
+    const enabled = skills.find(item => item.name === 'Toggle Me');
+    assert.equal(enabled?.enabled, true);
+    assert.deepEqual((yaml.parse(await fs.readFile(hermes.paths.config, 'utf-8'))).skills.disabled, []);
+  });
+});
+
 test('skills service lists gateway hooks with metadata and handler detection', async () => {
   await withSkillsWorkspace(async ({ hermes }) => {
     const deployHookDir = path.join(hermes.paths.hooks, 'deploy');

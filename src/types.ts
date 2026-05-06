@@ -333,6 +333,7 @@ export interface ProviderModelOption {
 }
 
 export interface SkillInfo {
+  id?: string;
   name: string;
   description?: string;
   path: string;
@@ -346,6 +347,8 @@ export interface SkillInfo {
   requiresToolsets?: string[];
   fallbackForTools?: string[];
   requiresTools?: string[];
+  enabled?: boolean;
+  disabledReason?: string;
   requiredEnvironmentVariables?: Array<{
     name: string;
     prompt?: string;

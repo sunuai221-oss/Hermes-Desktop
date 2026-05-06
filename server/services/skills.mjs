@@ -45,6 +45,32 @@ function sanitizeSkillSegment(value, fallback = 'skill') {
   return normalized || fallback;
 }
 
+function normalizeSkillDisableKey(value) {
+  return String(value || '')
+    .replace(/\\/g, '/')
+    .replace(/^\/+|\/+$/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function buildSkillId(path, rootDir, skillDir, name) {
+  const relDir = path.relative(rootDir, skillDir);
+  const normalizedRel = relDir
+    .split(path.sep)
+    .filter(Boolean)
+    .join('/');
+  return normalizedRel || sanitizeSkillSegment(name, 'skill');
+}
+
+function isSkillDisabled(disabledSet, skill) {
+  const candidates = [
+    skill.id,
+    skill.name,
+    skill.path,
+  ].map(normalizeSkillDisableKey).filter(Boolean);
+  return candidates.some(candidate => disabledSet.has(candidate));
+}
+
 function ensurePathInsideRoot(path, rootDir, candidatePath) {
   const relative = path.relative(rootDir, candidatePath);
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
@@ -138,7 +164,23 @@ export function createSkillsService({ fs, path, yaml }) {
     }
   }
 
-  async function collectSkillsRecursive(rootDir, currentDir, source, seenNames, results) {
+  async function writeConfigForSkills(hermes, config) {
+    await fs.mkdir(path.dirname(hermes.paths.config), { recursive: true });
+    try {
+      const existing = await fs.readFile(hermes.paths.config, 'utf-8');
+      if (existing.trim()) {
+        const doc = yaml.parseDocument(existing);
+        doc.setIn(['skills', 'disabled'], config?.skills?.disabled || []);
+        await fs.writeFile(hermes.paths.config, doc.toString(), 'utf-8');
+        return;
+      }
+    } catch {
+      // Fall back to writing a normalized config below.
+    }
+    await fs.writeFile(hermes.paths.config, `${yaml.stringify(config || {}).trim()}\n`, 'utf-8');
+  }
+
+  async function collectSkillsRecursive(rootDir, currentDir, source, seenNames, results, disabledSet) {
     const entries = await fs.readdir(currentDir, { withFileTypes: true });
     const hasSkill = entries.some(entry => entry.isFile() && entry.name === 'SKILL.md');
 
@@ -153,8 +195,9 @@ export function createSkillsService({ fs, path, yaml }) {
         const relDir = path.relative(rootDir, currentDir);
         const parts = relDir.split(path.sep).filter(Boolean);
         const category = parts.length > 1 ? parts[0] : undefined;
-
-        results.push({
+        const id = buildSkillId(path, rootDir, currentDir, name);
+        const skill = {
+          id,
           name,
           description: frontmatter.description,
           version: frontmatter.version,
@@ -169,6 +212,13 @@ export function createSkillsService({ fs, path, yaml }) {
           fallbackForTools: frontmatter.metadata?.hermes?.fallback_for_tools || [],
           requiresTools: frontmatter.metadata?.hermes?.requires_tools || [],
           requiredEnvironmentVariables: frontmatter.required_environment_variables || [],
+        };
+        const disabled = isSkillDisabled(disabledSet, skill);
+
+        results.push({
+          ...skill,
+          enabled: !disabled,
+          disabledReason: disabled ? 'disabled in config.yaml' : undefined,
         });
       }
       return;
@@ -177,7 +227,7 @@ export function createSkillsService({ fs, path, yaml }) {
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       if (entry.name.startsWith('.')) continue;
-      await collectSkillsRecursive(rootDir, path.join(currentDir, entry.name), source, seenNames, results);
+      await collectSkillsRecursive(rootDir, path.join(currentDir, entry.name), source, seenNames, results, disabledSet);
     }
   }
 
@@ -187,6 +237,7 @@ export function createSkillsService({ fs, path, yaml }) {
     if (cached) return cached;
 
     const config = await readConfigForSkills(hermes);
+    const disabledSet = new Set((config.skills?.disabled || []).map(normalizeSkillDisableKey).filter(Boolean));
     const externalDirs = (config.skills?.external_dirs || [])
       .map(entry => expandPath(hermes, entry))
       .filter(Boolean);
@@ -197,12 +248,53 @@ export function createSkillsService({ fs, path, yaml }) {
 
     for (const root of roots) {
       if (!(await pathExists(root.dir))) continue;
-      await collectSkillsRecursive(root.dir, root.dir, root.source, seenNames, results);
+      await collectSkillsRecursive(root.dir, root.dir, root.source, seenNames, results, disabledSet);
     }
 
     const sortedResults = results.sort((a, b) => a.name.localeCompare(b.name));
     writeSkillsCache(cacheKey, sortedResults);
     return sortedResults;
+  }
+
+  async function updateSkillEnabled(hermes, input = {}) {
+    const target = resolveLocalSkillTarget(path, hermes, input.path);
+    if (!target) {
+      throw createHttpError(400, 'Invalid local skill path');
+    }
+    if (!(await pathExists(target.skillFile))) {
+      throw createHttpError(404, 'Local skill not found');
+    }
+
+    const content = await fs.readFile(target.skillFile, 'utf-8');
+    const { frontmatter } = parseSkillFrontmatter(yaml, content);
+    const name = frontmatter.name || path.basename(target.skillDir);
+    const id = buildSkillId(path, target.skillsRoot, target.skillDir, name);
+    const enabled = input.enabled !== false;
+    const config = await readConfigForSkills(hermes);
+    const skillsConfig = config.skills && typeof config.skills === 'object' ? config.skills : {};
+    const existingDisabled = Array.isArray(skillsConfig.disabled) ? skillsConfig.disabled : [];
+    const aliases = new Set([id, name, target.skillDir].map(normalizeSkillDisableKey).filter(Boolean));
+    const nextDisabled = existingDisabled
+      .filter(item => !aliases.has(normalizeSkillDisableKey(item)));
+
+    if (!enabled) {
+      nextDisabled.push(id);
+    }
+
+    config.skills = {
+      ...skillsConfig,
+      disabled: Array.from(new Set(nextDisabled.map(String))).sort((a, b) => a.localeCompare(b)),
+    };
+
+    await writeConfigForSkills(hermes, config);
+    invalidateSkillsCache(hermes);
+
+    return {
+      id,
+      path: target.skillDir,
+      enabled,
+      disabled: !enabled,
+    };
   }
 
   async function createLocalSkill(hermes, input = {}) {
@@ -321,6 +413,7 @@ export function createSkillsService({ fs, path, yaml }) {
   return {
     readConfigForSkills,
     listSkills,
+    updateSkillEnabled,
     createLocalSkill,
     readLocalSkill,
     updateLocalSkill,

@@ -16,8 +16,6 @@ const GATEWAY_PORT = Number(process.env.HERMES_GATEWAY_PORT || 8642);
 const GATEWAY_BASE_URL = `http://127.0.0.1:${GATEWAY_PORT}`;
 const IS_DEV = process.env.HERMES_ELECTRON_DEV === '1';
 const DEFAULT_WSL_DISTRO = process.env.HERMES_WSL_DISTRO || 'Ubuntu';
-const DEFAULT_HERMES_WSL_HOME = process.env.HERMES_WSL_HOME || '/home/nabs/.hermes';
-const DEFAULT_HERMES_HOME_UNC = process.env.HERMES_HOME || `\\\\wsl.localhost\\${DEFAULT_WSL_DISTRO}\\home\\nabs\\.hermes`;
 
 let mainWindow = null;
 let backendProcess = null;
@@ -89,8 +87,6 @@ async function spawnBackend() {
       HERMES_BUILDER_PORT: String(BACKEND_PORT),
       PORT: String(BACKEND_PORT),
       HERMES_WSL_DISTRO: DEFAULT_WSL_DISTRO,
-      HERMES_WSL_HOME: DEFAULT_HERMES_WSL_HOME,
-      HERMES_HOME: DEFAULT_HERMES_HOME_UNC,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
