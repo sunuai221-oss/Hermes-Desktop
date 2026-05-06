@@ -136,7 +136,7 @@ test('context reference route preserves per-reference failures with inferred kin
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    req.hermes = { home: 'C:\\Users\\GAMER PC\\.hermes' };
+    req.hermes = { home: 'C:\\Users\\example\\.hermes' };
     next();
   });
 
