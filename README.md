@@ -56,8 +56,8 @@ Required:
 Optional:
 
 - A canonical WSL worktree if you prefer to keep git history and day-to-day development on ext4.
-- A local Kokoro-compatible TTS server, such as `http://127.0.0.1:8880`, for speech synthesis.
-- `ffmpeg` if you configure Kokoro output formats other than `wav`.
+- A local NeuTTS HTTP server, such as `http://127.0.0.1:8020`, for speech synthesis.
+- `ffmpeg` if your TTS service returns non-WAV audio or if you configure the optional Kokoro provider with non-`wav` output.
 
 If you develop from a canonical WSL worktree, use Node.js 22 or newer there as well.
 
@@ -122,7 +122,7 @@ At a high level, Hermes Desktop follows this flow:
 2. the launcher verifies that the Hermes gateway in WSL is reachable and starts it if needed, reusing an existing gateway process when possible
 3. Electron starts or reuses the local backend on Windows
 4. the backend serves the UI over `localhost` and manages Hermes runtime state and files
-5. voice requests use the backend pipeline for STT and Kokoro-compatible TTS
+5. voice requests use the backend pipeline for STT and NeuTTS server playback
 
 ## Technical Architecture
 
@@ -185,8 +185,8 @@ The backend is no longer a single large entrypoint. `server/index.mjs` now wires
 - `server/services/gateway-proxy.mjs`: gateway health, chat, provider payloads, and fallback calls
 - `server/services/path-resolver.mjs`: Windows, WSL, UNC, and gateway target path helpers
 - `server/services/profile-resolver.mjs`: Hermes home and profile path resolution
-- `server/services/voice.mjs`: voice request pipeline
-- `server/services/kokoro-tts.mjs`: Kokoro config normalization, speech shaping, FR/EN routing, and WAV concatenation
+- `server/services/voice.mjs`: voice request pipeline, STT orchestration, NeuTTS server requests, and TTS provider dispatch
+- `server/services/kokoro-tts.mjs`: optional Kokoro provider helpers, speech shaping, FR/EN routing, and WAV concatenation
 
 ## Planned Improvements
 
@@ -268,11 +268,11 @@ npm run check
 Hermes Desktop uses the backend voice pipeline for microphone input and message speech playback.
 
 - STT still runs through `server/voice_tools.py` and local Python dependencies.
-- TTS is handled by a Kokoro-compatible HTTP service.
-- The Config page exposes Kokoro runtime, response format, voice routing, speech shaping, and segment gap settings.
+- TTS is handled by an already-running NeuTTS HTTP server.
+- The Config page exposes TTS provider selection, NeuTTS server URL settings, and the optional Kokoro provider controls when that provider is selected.
 - Chat messages can be copied or synthesized directly from the message toolbar.
 
-Default Kokoro settings expect a local service at `http://127.0.0.1:8880` with the `/v1/audio/speech` endpoint. French and English text can be routed to separate voices before the generated WAV segments are joined.
+Default NeuTTS settings expect a local service at `http://127.0.0.1:8020` with the `POST /tts` endpoint. Hermes Desktop splits longer text into speakable segments, requests audio from NeuTTS, and joins the generated WAV segments for playback. Kokoro-compatible TTS remains available as an optional provider for setups that still use `http://127.0.0.1:8880` and `/v1/audio/speech`.
 
 ## Known Limitations
 
@@ -287,7 +287,7 @@ Common issues on a fresh setup:
 - `electron.exe` is missing or the launcher reports a Linux Electron binary: run `npm run setup` in the Windows working tree.
 - The backend fails with missing Node modules: run `npm run install:server` or `npm run setup`.
 - The gateway does not start from Windows: verify `HERMES_WSL_DISTRO`, `HERMES_CLI_PATH`, and that the Hermes CLI works inside WSL.
-- Kokoro speech synthesis fails: verify that the Kokoro service is running, that `tts.kokoro.runtime.base_url` points to it, and that `ffmpeg` is available when using non-`wav` output.
+- NeuTTS speech synthesis fails: verify that the NeuTTS server is running, that `tts.provider` is set to `neutts-server`, and that `tts.neutts_server.base_url` points to it. The default URL is `http://127.0.0.1:8020`.
 - You see `builder` names in logs, config, or health routes: that is expected compatibility naming, not a second product.
 
 For more detail, see `docs/troubleshooting.md`.
