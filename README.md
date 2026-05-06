@@ -67,10 +67,23 @@ For a fresh checkout on Windows:
 
 ```powershell
 npm run setup
+```
+
+The committed defaults expect:
+
+- WSL distro: `Ubuntu`
+- Hermes home inside WSL: `$HOME/.hermes`
+- Hermes CLI discoverable as `hermes` or installed under `$HOME/.local/bin`
+- Desktop backend port: `3020`
+- Gateway port: `8642`
+
+If your machine uses different values, copy the local override template and keep the copy untracked:
+
+```powershell
 Copy-Item hermes-desktop.local.cmd.example hermes-desktop.local.cmd
 ```
 
-Then update `hermes-desktop.local.cmd` only if your machine needs local overrides and keep it untracked.
+Then update only the variables your machine needs.
 
 Run the desktop application:
 
@@ -85,6 +98,12 @@ start-hermes-desktop-dev.bat
 ```
 
 `start-hermes-desktop.bat` is the default entrypoint. It checks Windows dependencies, verifies the Hermes gateway in WSL using `/health`, `/v1/health`, or a TCP probe, builds the UI bundle if needed, and launches Hermes Desktop in Electron.
+
+To validate a local checkout before launching the UI, run:
+
+```powershell
+npm run desktop:smoke
+```
 
 ## Launcher Modes
 
@@ -105,13 +124,55 @@ At a high level, Hermes Desktop follows this flow:
 4. the backend serves the UI over `localhost` and manages Hermes runtime state and files
 5. voice requests use the backend pipeline for STT and Kokoro-compatible TTS
 
+## Technical Architecture
+
+Hermes Desktop is a three-process local stack:
+
+| Layer | Runs in | Default endpoint | Responsibility |
+| --- | --- | --- | --- |
+| Electron shell | Windows | loads `http://127.0.0.1:3020` | Owns the desktop window, theme background, external-link handling, and startup orchestration. |
+| Desktop backend | Windows Node.js | `http://127.0.0.1:3020` | Serves the React UI, exposes `/api/*`, resolves profiles and files, and proxies/coordinates gateway calls. |
+| Hermes gateway | WSL | `http://127.0.0.1:8642` | Runs the Hermes runtime API used for chat, model/provider calls, diagnostics, and agent operations. |
+
+Startup details:
+
+1. `start-hermes-desktop.bat` loads `hermes-desktop.local.cmd` or the legacy `hermes-builder.local.cmd` if present.
+2. It verifies Windows Electron dependencies and `server/node_modules`; missing dependencies are installed with `npm install` and `npm run install:server`.
+3. It checks the gateway via `/health`, `/v1/health`, and a TCP probe. If the gateway is offline, it starts `run-gateway-wsl.cmd`.
+4. It builds `dist/` with `npm run build` when the production frontend bundle is missing.
+5. Electron starts. If `/api/desktop/health` is already healthy on `3020`, it reuses that backend; otherwise it spawns `server/index.mjs` with the current Node executable.
+6. Electron asks the backend to start the gateway through `POST /api/gateway/start` if the gateway is still offline.
+7. Electron creates a `BrowserWindow` and loads the backend URL. The window uses `electron/preload.mjs`, `contextIsolation: true`, and `nodeIntegration: false`.
+
+Frontend serving:
+
+- Production mode serves the built React bundle from `dist/`.
+- Dev mode uses `start-hermes-desktop-dev.bat`, sets `HERMES_ELECTRON_DEV=1`, and lets the backend mount Vite as middleware on the same backend origin.
+- Standalone Vite development is available through `npm run dev:vite` on port `3030`, but the normal Electron path uses port `3020`.
+
+Profile and filesystem resolution:
+
+- The backend resolves the base Hermes home from `HERMES_HOME`, `HERMES_WSL_HOME`, the parent `.hermes` folder, the Windows user `.hermes`, or an auto-detected WSL `$HOME/.hermes`.
+- The default WSL distro is `Ubuntu`; override it with `HERMES_WSL_DISTRO`.
+- Gateway launch uses `HERMES_CLI_PATH` when set, otherwise `hermes` from `PATH`, with `$HOME/.local/bin` prepended inside WSL.
+- Profile-specific state is isolated through the profile resolver, while legacy `.hermes-builder` state paths remain only for compatibility.
+
+Main backend surfaces:
+
+- `/api/desktop/health`: backend health and frontend bundle readiness.
+- `/api/gateway/*`: gateway health, process control, diagnostics, chat, and streaming chat proxy.
+- `/api/sessions/*`: local session CRUD, transcripts, continuation, resume, export, and stats.
+- `/api/skills`, `/api/skills/content`, `/api/skills/enabled`: local/external skill listing, editing, and enable/disable state.
+- `/api/plugins` and `/api/hooks`: extension and hook discovery.
+- `/api/config`, `/api/profiles/*`, `/api/agents/*`, `/api/memory/*`, `/api/context-files/*`, `/api/cronjobs/*`: runtime configuration, profile management, agent presets, memory, context references, and automations.
+
 ## Does Hermes Desktop depend on a web app?
 
 No.
 
 Hermes Desktop runs entirely locally. The Electron app starts (or reuses) a local backend, which serves the UI over HTTP.
 
-There is no hosted frontend and no external dependency required.
+There is no hosted frontend or cloud service required for the desktop UI. Normal use still requires the local WSL Hermes runtime described in the prerequisites.
 
 Some internal paths and variables still use legacy `builder` naming for compatibility. These are internal implementation details only.
 
