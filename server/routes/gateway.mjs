@@ -329,13 +329,13 @@ async function requestDetailedGatewayHealth(hermes, axios) {
   return { ok: false, error: lastError?.message || 'Gateway detailed health endpoint unavailable' };
 }
 
-async function readGatewayLogs(fs, hermes, maxLines = MAX_LOG_LINES) {
-  const candidates = [
-    path.join(hermes.home, 'gateway.log'),
-    path.join(hermes.home, 'logs', 'gateway.log'),
-    path.join(hermes.home, 'logs', 'hermes-gateway.log'),
-    path.join(hermes.home, 'logs', 'gateway', 'gateway.log'),
-    path.join(hermes.paths.appState, 'gateway.log'),
+export async function readGatewayLogs(fs, hermes, maxLines = MAX_LOG_LINES) {
+  const candidateEntries = [
+    { path: path.join(hermes.home, 'gateway.log'), priority: 0 },
+    { path: path.join(hermes.home, 'logs', 'gateway.log'), priority: 0 },
+    { path: path.join(hermes.home, 'logs', 'hermes-gateway.log'), priority: 0 },
+    { path: path.join(hermes.home, 'logs', 'gateway', 'gateway.log'), priority: 0 },
+    { path: path.join(hermes.paths.appState, 'gateway.log'), priority: 0 },
   ];
 
   const logsDir = path.join(hermes.home, 'logs');
@@ -343,19 +343,30 @@ async function readGatewayLogs(fs, hermes, maxLines = MAX_LOG_LINES) {
     const entries = await fs.readdir(logsDir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.log')) continue;
-      candidates.push(path.join(logsDir, entry.name));
+      const lowerName = entry.name.toLowerCase();
+      candidateEntries.push({
+        path: path.join(logsDir, entry.name),
+        priority: lowerName.includes('gateway') ? 0 : 1,
+      });
     }
   } catch {
     // Logs directory may not exist yet.
   }
 
-  const uniqueCandidates = Array.from(new Set(candidates));
+  const uniqueCandidates = Array.from(candidateEntries.reduce((acc, candidate) => {
+    const existing = acc.get(candidate.path);
+    if (!existing || candidate.priority < existing.priority) {
+      acc.set(candidate.path, candidate);
+    }
+    return acc;
+  }, new Map()).values());
+
   const existing = [];
   for (const candidate of uniqueCandidates) {
     try {
-      const stat = await fs.stat(candidate);
+      const stat = await fs.stat(candidate.path);
       if (stat.isFile()) {
-        existing.push({ path: candidate, stat });
+        existing.push({ path: candidate.path, priority: candidate.priority, stat });
       }
     } catch {
       // missing log file
@@ -373,7 +384,7 @@ async function readGatewayLogs(fs, hermes, maxLines = MAX_LOG_LINES) {
     };
   }
 
-  existing.sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs);
+  existing.sort((a, b) => a.priority - b.priority || b.stat.mtimeMs - a.stat.mtimeMs);
   const selected = existing[0];
   const text = await readFileTail(fs, selected.path, MAX_LOG_BYTES);
   const lines = text.split(/\r?\n/);

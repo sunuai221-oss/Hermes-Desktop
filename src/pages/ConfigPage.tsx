@@ -133,7 +133,7 @@ export function ConfigPage() {
 
   const runDiagnosticCommand = useCallback(async (
     action: Extract<DiagnosticsAction, 'doctor' | 'dump' | 'backup'>,
-    request: () => Promise<{ data: Record<string, unknown> }>,
+    request: () => Promise<{ data: Record<string, unknown>; status?: number }>,
   ) => {
     setActionLoading(action, true);
     setDiagnosticsStatus(null);
@@ -141,13 +141,24 @@ export function ConfigPage() {
       const response = await request();
       const payload = response.data || {};
       setDiagnosticsOutput(formatCommandOutput(payload));
-      if (payload.ok === false) {
-        setDiagnosticsStatus({ tone: 'error', message: `${action} failed.` });
+      const failed = payload.ok === false || (typeof response.status === 'number' && response.status >= 400);
+      if (failed) {
+        const message = typeof payload.error === 'string' ? payload.error : `${action} failed.`;
+        setDiagnosticsStatus({ tone: 'error', message });
       } else {
         setDiagnosticsStatus({ tone: 'success', message: `${action} completed.` });
       }
     } catch (error) {
-      const message = (error as { response?: { data?: { error?: string } } })?.response?.data?.error || `${action} failed.`;
+      const axiosError = error as AxiosError<Record<string, unknown>>;
+      const payload = axiosError.response?.data;
+      if (payload && typeof payload === 'object') {
+        setDiagnosticsOutput(formatCommandOutput(payload));
+      }
+      const message = typeof payload?.error === 'string'
+        ? payload.error
+        : axiosError.code === 'ECONNABORTED'
+          ? `${action} timed out before Hermes returned output.`
+          : `${action} failed.`;
       setDiagnosticsStatus({ tone: 'error', message });
     } finally {
       setActionLoading(action, false);

@@ -39,6 +39,8 @@ const DIRECT_GATEWAY_BASE = (
 const http = axios.create({ baseURL: BASE, timeout: 5000 });
 const voiceHttp = axios.create({ baseURL: BASE, timeout: 180000 });
 const scanHttp = axios.create({ baseURL: BASE, timeout: 60000 });
+const diagnosticsHttp = axios.create({ baseURL: BASE, timeout: 240000 });
+const DEFAULT_DIAGNOSTICS_TIMEOUT_MS = 180000;
 
 function attachProfileHeaderInterceptor(client: ReturnType<typeof axios.create>) {
   client.interceptors.request.use((config) => {
@@ -79,6 +81,22 @@ async function probeDirectGateway(baseUrl = DIRECT_GATEWAY_BASE) {
 attachProfileHeaderInterceptor(http);
 attachProfileHeaderInterceptor(voiceHttp);
 attachProfileHeaderInterceptor(scanHttp);
+attachProfileHeaderInterceptor(diagnosticsHttp);
+
+function diagnosticsCommand(path: string, timeoutMs = DEFAULT_DIAGNOSTICS_TIMEOUT_MS) {
+  const commandTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? Math.trunc(timeoutMs)
+    : DEFAULT_DIAGNOSTICS_TIMEOUT_MS;
+
+  return diagnosticsHttp.post(
+    path,
+    { timeoutMs: commandTimeoutMs },
+    {
+      timeout: Math.max(commandTimeoutMs + 15000, 60000),
+      validateStatus: () => true,
+    },
+  );
+}
 
 export const profiles = {
   list: () => http.get<Array<{ name: string; isDefault: boolean; model: string; port?: number; status: 'online' | 'offline'; managed?: boolean; status_source?: 'managed-profile' | 'shared-global' | 'offline'; home?: string }>>('/api/profiles/metadata'),
@@ -97,9 +115,9 @@ export const gateway = {
   processStatus: () => http.get<{ status: 'online' | 'offline'; port?: number | null; pid?: number; gateway_state?: 'starting' | 'running' | 'stopped'; managed?: boolean; status_source?: 'managed-profile' | 'shared-global' | 'offline'; gateway_url?: string; home?: string; workspace_root?: string }>('/api/gateway/process-status'),
   diagnostics: () => http.get('/api/gateway/diagnostics'),
   diagnosticsLogs: (lines = 400) => http.get('/api/gateway/diagnostics/logs', { params: { lines } }),
-  diagnosticsDoctor: (timeoutMs?: number) => http.post('/api/gateway/diagnostics/doctor', timeoutMs ? { timeoutMs } : {}),
-  diagnosticsDump: (timeoutMs?: number) => http.post('/api/gateway/diagnostics/dump', timeoutMs ? { timeoutMs } : {}),
-  diagnosticsBackup: (timeoutMs?: number) => http.post('/api/gateway/diagnostics/backup', timeoutMs ? { timeoutMs } : {}),
+  diagnosticsDoctor: (timeoutMs?: number) => diagnosticsCommand('/api/gateway/diagnostics/doctor', timeoutMs),
+  diagnosticsDump: (timeoutMs?: number) => diagnosticsCommand('/api/gateway/diagnostics/dump', timeoutMs),
+  diagnosticsBackup: (timeoutMs?: number) => diagnosticsCommand('/api/gateway/diagnostics/backup', timeoutMs),
   start: (port?: number, profileName?: string) => http.post('/api/gateway/start', { port }, withProfileHeader(profileName)),
   stop: (profileName?: string) => http.post('/api/gateway/stop', {}, withProfileHeader(profileName)),
   chat: (body: ChatRequestBody) => http.post('/api/gateway/chat', body),
