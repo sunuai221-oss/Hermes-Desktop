@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, nativeTheme, shell } from 'electron';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
@@ -16,10 +16,57 @@ const GATEWAY_PORT = Number(process.env.HERMES_GATEWAY_PORT || 8642);
 const GATEWAY_BASE_URL = `http://127.0.0.1:${GATEWAY_PORT}`;
 const IS_DEV = process.env.HERMES_ELECTRON_DEV === '1';
 const DEFAULT_WSL_DISTRO = process.env.HERMES_WSL_DISTRO || 'Ubuntu';
+const DETECTED_WSL_HOME = detectWslHome(DEFAULT_WSL_DISTRO);
+const DEFAULT_HERMES_WSL_HOME = normalizeWslPath(process.env.HERMES_WSL_HOME || `${DETECTED_WSL_HOME}/.hermes`);
+const DEFAULT_HERMES_HOME_UNC = process.env.HERMES_HOME || wslPathToUnc(DEFAULT_WSL_DISTRO, DEFAULT_HERMES_WSL_HOME);
 
 let mainWindow = null;
 let backendProcess = null;
 let backendOwnedByElectron = false;
+
+function normalizeWslPath(value) {
+  return String(value || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
+function isAbsoluteWslPath(value) {
+  return normalizeWslPath(value).startsWith('/');
+}
+
+function fallbackWslHome() {
+  const user = String(process.env.HERMES_WSL_USER || process.env.USER || process.env.LOGNAME || 'hermes')
+    .replace(/[^A-Za-z0-9_.-]+/g, '')
+    || 'hermes';
+  return `/home/${user}`;
+}
+
+function detectWslHome(distro) {
+  try {
+    const detectedHome = execFileSync('wsl.exe', [
+      '-d',
+      distro,
+      '-e',
+      'bash',
+      '-lc',
+      'printf %s "$HOME"',
+    ], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5000,
+      windowsHide: true,
+    }).trim();
+    const normalizedHome = normalizeWslPath(detectedHome);
+    const envHome = normalizeWslPath(process.env.HOME);
+    return normalizedHome || (isAbsoluteWslPath(envHome) ? envHome : '') || fallbackWslHome();
+  } catch {
+    const envHome = normalizeWslPath(process.env.HOME);
+    return (isAbsoluteWslPath(envHome) ? envHome : '') || fallbackWslHome();
+  }
+}
+
+function wslPathToUnc(distro, wslPath) {
+  const normalizedPath = normalizeWslPath(wslPath) || `${fallbackWslHome()}/.hermes`;
+  return `\\\\wsl.localhost\\${distro}${normalizedPath.replace(/\//g, '\\')}`;
+}
 
 function log(...args) {
   console.log('[hermes-electron]', ...args);
@@ -87,6 +134,8 @@ async function spawnBackend() {
       HERMES_BUILDER_PORT: String(BACKEND_PORT),
       PORT: String(BACKEND_PORT),
       HERMES_WSL_DISTRO: DEFAULT_WSL_DISTRO,
+      HERMES_WSL_HOME: DEFAULT_HERMES_WSL_HOME,
+      HERMES_HOME: DEFAULT_HERMES_HOME_UNC,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,

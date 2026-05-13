@@ -71,3 +71,19 @@ test('desktop health remains available while CORS is restricted to loopback orig
   assert.equal(blockedResponse.status, 200);
   assert.equal(blockedResponse.headers.get('access-control-allow-origin'), null);
 });
+
+test('gateway status alias exposes process-status response contract', async () => {
+  const [processStatusResponse, statusAliasResponse] = await Promise.all([
+    fetch(`${baseUrl}/api/gateway/process-status`),
+    fetch(`${baseUrl}/api/gateway/status`),
+  ]);
+
+  assert.equal(processStatusResponse.status, 200);
+  assert.equal(statusAliasResponse.status, 200);
+
+  const processStatus = await processStatusResponse.json();
+  const statusAlias = await statusAliasResponse.json();
+  assert.equal(typeof processStatus.status, 'string');
+  assert.equal(typeof statusAlias.status, 'string');
+  assert.deepEqual(Object.keys(statusAlias).sort(), Object.keys(processStatus).sort());
+});

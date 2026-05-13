@@ -1,15 +1,24 @@
 import axios from 'axios';
 import type {
-  AgentProfile,
+  AgentDefinition,
+  AgentWorkspace,
+  AgentWorkspaceExecutionResult,
   CronJob,
   HermesConfig,
   ImageAttachment,
+  KanbanAssignee,
+  KanbanBoard,
+  KanbanStats,
+  KanbanStatus,
+  KanbanTask,
+  KanbanTaskDetail,
   Message,
   ModelThinkMode,
   OllamaModel,
   VoiceChatResponse,
   VoiceSynthesisResponse,
 } from './types';
+import { getActiveProfileName } from './features/chat/chatStorage';
 
 type ChatRequestBody = {
   model: string;
@@ -29,6 +38,31 @@ type ChatRequestBody = {
   session_title?: string;
 };
 
+type AgencyImportPayload = {
+  bundled?: boolean;
+  rootPath?: string;
+  repoUrl?: string;
+  branch?: string;
+};
+
+type AgencyImportResult = {
+  imported: number;
+  updated: number;
+  skipped: number;
+  agents: AgentDefinition[];
+};
+
+type PreferredSkillsUpdate = {
+  id: string;
+  preferredSkills: string[];
+};
+
+type WorkspaceChatPayload = {
+  task: string;
+  mode?: AgentWorkspace['defaultMode'];
+  model?: string;
+};
+
 const BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 const DIRECT_GATEWAY_BASE = (
   import.meta.env.VITE_DIRECT_GATEWAY_URL
@@ -44,7 +78,7 @@ const DEFAULT_DIAGNOSTICS_TIMEOUT_MS = 180000;
 
 function attachProfileHeaderInterceptor(client: ReturnType<typeof axios.create>) {
   client.interceptors.request.use((config) => {
-    const profile = localStorage.getItem('hermes_profile') || 'default';
+    const profile = getActiveProfileName();
     config.headers['X-Hermes-Profile'] = profile;
     return config;
   });
@@ -99,7 +133,6 @@ function diagnosticsCommand(path: string, timeoutMs = DEFAULT_DIAGNOSTICS_TIMEOU
 }
 
 export const profiles = {
-  list: () => http.get<Array<{ name: string; isDefault: boolean; model: string; port?: number; status: 'online' | 'offline'; managed?: boolean; status_source?: 'managed-profile' | 'shared-global' | 'offline'; home?: string }>>('/api/profiles/metadata'),
   metadata: () => http.get<Array<{ name: string; isDefault: boolean; model: string; port?: number; status: 'online' | 'offline'; managed?: boolean; status_source?: 'managed-profile' | 'shared-global' | 'offline'; home?: string }>>('/api/profiles/metadata'),
   create: (name: string) => http.post('/api/profiles', { name }),
   delete: (name: string) => http.delete(`/api/profiles/${encodeURIComponent(name)}`),
@@ -122,7 +155,7 @@ export const gateway = {
   stop: (profileName?: string) => http.post('/api/gateway/stop', {}, withProfileHeader(profileName)),
   chat: (body: ChatRequestBody) => http.post('/api/gateway/chat', body),
   streamChat: (body: ChatRequestBody) => {
-    const profile = localStorage.getItem('hermes_profile') || 'default';
+    const profile = getActiveProfileName();
     return fetch(`${BASE}/api/gateway/chat/stream`, {
       method: 'POST',
       headers: { 
@@ -139,10 +172,40 @@ export const soul = {
   save: (content: string) => http.post('/api/soul', { content }),
 };
 
-export const agents = {
-  list: () => http.get('/api/agents'),
-  save: (profiles: AgentProfile[]) => http.post('/api/agents', { profiles }),
-  apply: (id: string) => http.post(`/api/agents/${encodeURIComponent(id)}/apply`),
+export const agentStudio = {
+  library: () => http.get<{ schemaVersion: number; agents: AgentDefinition[] }>('/api/agent-studio/library'),
+  importAgency: (payload: AgencyImportPayload) =>
+    http.post<AgencyImportResult>('/api/agent-studio/library/import-agency', payload),
+  createAgent: (agent: Partial<AgentDefinition>) =>
+    http.post<{ success: true; agent: AgentDefinition }>('/api/agent-studio/library', agent),
+  updateAgent: (id: string, patch: Partial<AgentDefinition>) =>
+    http.patch<{ success: true; agent: AgentDefinition }>(`/api/agent-studio/library/${encodeURIComponent(id)}`, patch),
+  updatePreferredSkills: (updates: PreferredSkillsUpdate[]) =>
+    http.post<{ success: true; updated: number; skipped: number; agents: AgentDefinition[] }>(
+      '/api/agent-studio/library/preferred-skills',
+      { updates },
+    ),
+  deleteAgent: (id: string) =>
+    http.delete<{ success: true }>(`/api/agent-studio/library/${encodeURIComponent(id)}`),
+  applyAgent: (id: string) =>
+    http.post<{
+      success: true;
+      applied: { id: string; name: string; wroteSoul: boolean; updatedConfig: boolean; profile?: string };
+    }>(`/api/agent-studio/library/${encodeURIComponent(id)}/apply`),
+
+  workspaces: () => http.get<{ schemaVersion: number; workspaces: AgentWorkspace[] }>('/api/agent-studio/workspaces'),
+  createWorkspace: (workspace: Partial<AgentWorkspace>) =>
+    http.post<{ success: true; workspace: AgentWorkspace }>('/api/agent-studio/workspaces', workspace),
+  updateWorkspace: (id: string, patch: Partial<AgentWorkspace>) =>
+    http.patch<{ success: true; workspace: AgentWorkspace }>(`/api/agent-studio/workspaces/${encodeURIComponent(id)}`, patch),
+  deleteWorkspace: (id: string) =>
+    http.delete<{ success: true }>(`/api/agent-studio/workspaces/${encodeURIComponent(id)}`),
+  generatePrompt: (id: string) =>
+    http.post<{ prompt: string }>(`/api/agent-studio/workspaces/${encodeURIComponent(id)}/generate-prompt`),
+  executeWorkspace: (id: string, mode?: AgentWorkspace['defaultMode']) =>
+    scanHttp.post<AgentWorkspaceExecutionResult>(`/api/agent-studio/workspaces/${encodeURIComponent(id)}/execute`, mode ? { mode } : {}),
+  chatWorkspace: (id: string, payload: WorkspaceChatPayload) =>
+    scanHttp.post<AgentWorkspaceExecutionResult>(`/api/agent-studio/workspaces/${encodeURIComponent(id)}/chat`, payload),
 };
 
 export const memory = {
@@ -171,6 +234,51 @@ export const cronjobs = {
   action: (id: string, action: 'pause' | 'resume' | 'run' | 'remove') =>
     http.post(`/api/cronjobs/${encodeURIComponent(id)}/${action}`),
   outputs: (id?: string) => http.get('/api/cronjobs/outputs', { params: id ? { jobId: id } : {} }),
+};
+
+export const kanban = {
+  boards: () => scanHttp.get<KanbanBoard[]>('/api/kanban/boards'),
+  createBoard: (payload: { slug: string; name?: string; description?: string; icon?: string; color?: string; switch?: boolean }) =>
+    http.post<KanbanBoard[]>('/api/kanban/boards', payload),
+  switchBoard: (slug: string) => http.post<KanbanBoard[]>(`/api/kanban/boards/${encodeURIComponent(slug)}/switch`),
+  tasks: (params?: { board?: string; status?: string; assignee?: string; tenant?: string; archived?: boolean }) =>
+    scanHttp.get<KanbanTask[]>('/api/kanban/tasks', { params }),
+  task: (id: string, board?: string) =>
+    http.get<KanbanTaskDetail>(`/api/kanban/tasks/${encodeURIComponent(id)}`, { params: board ? { board } : {} }),
+  createTask: (payload: {
+    board?: string;
+    title: string;
+    body?: string;
+    assignee?: string;
+    tenant?: string;
+    priority?: number | string;
+    workspace?: string;
+    triage?: boolean;
+    parents?: string[];
+    skills?: string[];
+    maxRuntime?: string;
+    maxRetries?: number | string;
+  }) => http.post<KanbanTask>('/api/kanban/tasks', payload),
+  assign: (id: string, payload: { board?: string; assignee?: string }) =>
+    http.post<KanbanTaskDetail>(`/api/kanban/tasks/${encodeURIComponent(id)}/assign`, payload),
+  setStatus: (id: string, payload: { board?: string; status: KanbanStatus; reason?: string; result?: string; summary?: string; metadata?: Record<string, unknown> }) =>
+    scanHttp.post<KanbanTaskDetail>(`/api/kanban/tasks/${encodeURIComponent(id)}/status`, payload),
+  comment: (id: string, payload: { board?: string; text: string; author?: string }) =>
+    http.post<KanbanTaskDetail>(`/api/kanban/tasks/${encodeURIComponent(id)}/comment`, payload),
+  complete: (id: string, payload: { board?: string; result?: string; summary?: string; metadata?: Record<string, unknown> }) =>
+    http.post<KanbanTaskDetail>(`/api/kanban/tasks/${encodeURIComponent(id)}/complete`, payload),
+  block: (id: string, payload: { board?: string; reason?: string }) =>
+    http.post<KanbanTaskDetail>(`/api/kanban/tasks/${encodeURIComponent(id)}/block`, payload),
+  unblock: (id: string, payload: { board?: string }) =>
+    http.post<KanbanTaskDetail>(`/api/kanban/tasks/${encodeURIComponent(id)}/unblock`, payload),
+  archive: (id: string, payload: { board?: string }) =>
+    http.post<KanbanTaskDetail>(`/api/kanban/tasks/${encodeURIComponent(id)}/archive`, payload),
+  reclaim: (id: string, payload: { board?: string; reason?: string }) =>
+    http.post<KanbanTaskDetail>(`/api/kanban/tasks/${encodeURIComponent(id)}/reclaim`, payload),
+  stats: (board?: string) => scanHttp.get<KanbanStats>('/api/kanban/stats', { params: board ? { board } : {} }),
+  assignees: (board?: string) => scanHttp.get<KanbanAssignee[]>('/api/kanban/assignees', { params: board ? { board } : {} }),
+  log: (id: string, board?: string, tail = 12000) =>
+    scanHttp.get<{ taskId: string; content: string }>(`/api/kanban/tasks/${encodeURIComponent(id)}/log`, { params: { board, tail } }),
 };
 
 export const config = {
@@ -246,7 +354,7 @@ export const voice = {
   synthesize: (text: string) =>
     voiceHttp.post<VoiceSynthesisResponse>('/api/voice/synthesize', { text }),
   streamSynthesize: (text: string, options?: { signal?: AbortSignal }) => {
-    const profile = localStorage.getItem('hermes_profile') || 'default';
+    const profile = getActiveProfileName();
     return fetch(`${BASE}/api/voice/synthesize/stream`, {
       method: 'POST',
       headers: {

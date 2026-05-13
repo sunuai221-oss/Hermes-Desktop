@@ -1,39 +1,28 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import type { RefObject } from 'react';
 import { useProfiles } from '../contexts/ProfileContext';
 import { useGatewayContext } from '../contexts/GatewayContext';
-import * as apiClient from '../api';
-import type {
-  ChatToolCall,
-  ChatUsage,
-  ContextReferenceAttachment,
-  ImageAttachment,
-  Message,
-  ResolvedContextReference,
-} from '../types';
+import type { ContextReferenceAttachment } from '../types';
+import { getRuntimeProviderKey, getRuntimeProviderLabel } from './chatProviderRuntime';
+import { getVoiceStatusLabel, type VoiceState } from './chatVoice';
+import { CHAT_COMMANDS } from '../features/chat/chatCommands';
+import { getModelContextWindow } from '../features/chat/chatUsage';
+import { useChatDraft } from '../features/chat/hooks/useChatDraft';
+import { useChatContextFiles } from '../features/chat/hooks/useChatContextFiles';
+import { useChatSession } from '../features/chat/hooks/useChatSession';
+import { useChatAudio } from '../features/chat/hooks/useChatAudio';
+import { useChatUploads } from '../features/chat/hooks/useChatUploads';
+import { useChatMessages } from '../features/chat/hooks/useChatMessages';
+import { useChatTokenEstimates, type ChatTokenEstimates } from '../features/chat/hooks/useChatTokenEstimates';
+import { useChatLocalCommands } from '../features/chat/hooks/useChatLocalCommands';
 import {
-  normalizeGatewayUsage,
-  normalizeToolCallDeltas,
-  parseSseChunk,
-} from '../lib/sseParser';
-
-type VoiceState = 'idle' | 'recording' | 'processing' | 'speaking';
-export type ChatProvider = 'codex-openai' | 'custom' | 'ollama' | 'nous';
-type RuntimeProvider = ChatProvider | 'profile-default';
+  getChatMessagesStorageKey,
+  getChatSessionStorageKey,
+} from '../features/chat/chatStorage';
 
 const MAX_IMAGES = 5;
-const ACTIVE_CHAT_SESSION_KEY_PREFIX = 'hermes_active_chat_session:';
-const ACTIVE_CHAT_MESSAGES_KEY_PREFIX = 'hermes_active_chat_messages:';
-const MESSAGE_OVERHEAD_TOKENS = 6;
-const ESTIMATED_IMAGE_TOKENS = 256;
-const CONTEXT_WINDOW_KEYS = [
-  'context_window',
-  'contextWindow',
-  'max_context_tokens',
-  'maxTokens',
-  'max_tokens',
-  'num_ctx',
-] as const;
+export { CHAT_COMMANDS };
+export type { ChatCommandDefinition, ChatCommandId } from '../features/chat/chatCommands';
 
 export const referenceTemplates: Array<{
   kind: ContextReferenceAttachment['kind'];
@@ -48,399 +37,6 @@ export const referenceTemplates: Array<{
   { kind: 'url', label: '@url', placeholder: 'https://example.com' },
 ];
 
-export type ChatCommandId = 'new' | 'usage' | 'status' | 'compact' | 'tools' | 'memory' | 'model';
-
-export interface ChatCommandDefinition {
-  id: ChatCommandId;
-  command: `/${ChatCommandId}`;
-  description: string;
-  localOnly: boolean;
-}
-
-export const CHAT_COMMANDS: ChatCommandDefinition[] = [
-  { id: 'new', command: '/new', description: 'Start a fresh chat session', localOnly: true },
-  { id: 'usage', command: '/usage', description: 'Show latest token, cost, and limit usage', localOnly: true },
-  { id: 'status', command: '/status', description: 'Show backend, gateway, profile, and model status', localOnly: true },
-  { id: 'compact', command: '/compact', description: 'Ask Hermes runtime to compact the session context', localOnly: false },
-  { id: 'tools', command: '/tools', description: 'Ask Hermes runtime to inspect enabled tools', localOnly: false },
-  { id: 'memory', command: '/memory', description: 'Ask Hermes runtime to inspect memory state', localOnly: false },
-  { id: 'model', command: '/model', description: 'Ask Hermes runtime to inspect/switch model behavior', localOnly: false },
-];
-
-// ── Helpers ─────────────────────────────────────────────────────
-
-function stopMicrophoneCapture(
-  recorderRef: RefObject<MediaRecorder | null>,
-  streamRef: RefObject<MediaStream | null>,
-) {
-  recorderRef.current = null;
-  const stream = streamRef.current;
-  streamRef.current = null;
-  if (stream) {
-    for (const track of stream.getTracks()) track.stop();
-  }
-}
-
-function createVoiceAbortError(): Error {
-  const error = new Error('Voice playback interrupted');
-  error.name = 'AbortError';
-  return error;
-}
-
-function isVoiceAbortError(error: unknown): boolean {
-  return Boolean(
-    error
-    && typeof error === 'object'
-    && 'name' in error
-    && String((error as { name?: unknown }).name) === 'AbortError',
-  );
-}
-
-function toReferenceString(ref: ContextReferenceAttachment): string {
-  if (ref.kind === 'diff' || ref.kind === 'staged') return `@${ref.kind}`;
-  if (ref.kind === 'git') return `@git:${ref.value}`;
-  return `@${ref.kind}:${ref.value}`;
-}
-
-function buildVisionContent(text: string, images: ImageAttachment[]): string {
-  if (images.length === 0) return text;
-  const imageBlock = images
-    .map((img, i) => `![image-${i + 1}](${img.path || img.dataUrl})`)
-    .join('\n');
-  return `${text}\n\n${imageBlock}`;
-}
-
-function extractImageFilesFromClipboard(data: DataTransfer): File[] {
-  const files: File[] = [];
-  for (const item of Array.from(data.items)) {
-    if (item.kind === 'file' && item.type.startsWith('image/')) {
-      const file = item.getAsFile();
-      if (file) files.push(file);
-    }
-  }
-  return files;
-}
-
-async function readBlobAsDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-}
-
-function extractVoiceAudioFileName(audioUrl: string): string | null {
-  const normalized = String(audioUrl || '').trim();
-  if (!normalized) return null;
-  try {
-    const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1';
-    const url = new URL(normalized, baseUrl);
-    const match = url.pathname.match(/\/api\/voice\/audio\/([^/]+)$/);
-    return match?.[1] ? decodeURIComponent(match[1]) : null;
-  } catch {
-    return null;
-  }
-}
-
-async function convertDataUrlToPng(dataUrl: string): Promise<{ dataUrl: string; width: number; height: number }> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) { reject(new Error('Canvas unsupported')); return; }
-      ctx.drawImage(img, 0, 0);
-      resolve({ dataUrl: canvas.toDataURL('image/png'), width: img.naturalWidth, height: img.naturalHeight });
-    };
-    img.onerror = reject;
-    img.src = dataUrl;
-  });
-}
-
-async function readImageDimensions(dataUrl: string): Promise<{ width: number; height: number }> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
-    img.onerror = () => resolve({ width: 0, height: 0 });
-    img.src = dataUrl;
-  });
-}
-
-async function normalizeImageFile(file: File): Promise<{ fileName: string; dataUrl: string; width: number; height: number }> {
-  const raw = await readBlobAsDataUrl(file);
-  if (file.type === 'image/png') {
-    const dims = await readImageDimensions(raw);
-    return { fileName: file.name, dataUrl: raw, ...dims };
-  }
-  const converted = await convertDataUrlToPng(raw);
-  const baseName = file.name.replace(/\.[^.]+$/, '');
-  return { fileName: `${baseName}.png`, ...converted };
-}
-
-function isOllamaBaseUrl(value: string | undefined): boolean {
-  const normalized = String(value || '').trim().toLowerCase();
-  return normalized.includes('127.0.0.1:11434') || normalized.includes('localhost:11434');
-}
-
-function isLlamaCppBaseUrl(value: string | undefined): boolean {
-  const normalized = String(value || '').trim().toLowerCase();
-  return normalized.includes('127.0.0.1:8081') || normalized.includes('localhost:8081');
-}
-
-function normalizeRuntimeValue(value: string | undefined): string {
-  return String(value || '').trim().toLowerCase();
-}
-
-function getRuntimeProviderKey(config: { model?: { provider?: string; base_url?: string } } | null): RuntimeProvider {
-  const provider = normalizeRuntimeValue(config?.model?.provider);
-  const baseUrl = String(config?.model?.base_url || '').trim();
-  if (provider === 'ollama' || ((provider === 'custom' || !provider) && isOllamaBaseUrl(baseUrl))) return 'ollama';
-  if (provider === 'custom' || (!provider && !!baseUrl)) return 'custom';
-  if (provider === 'codex-openai' || provider === 'openai-codex' || provider === 'openai' || provider === 'codex') return 'codex-openai';
-  if (provider === 'nous' || provider === 'nous-research' || provider === 'nousresearch') return 'nous';
-  return 'profile-default';
-}
-
-function getRuntimeProviderLabel(config: { model?: { provider?: string; base_url?: string } } | null): string {
-  const key = getRuntimeProviderKey(config);
-  const provider = normalizeRuntimeValue(config?.model?.provider);
-  const baseUrl = String(config?.model?.base_url || '').trim();
-  if (key === 'ollama') return 'Ollama';
-  if (key === 'custom') return isLlamaCppBaseUrl(baseUrl) ? 'llama.cpp' : 'Custom API';
-  if (key === 'codex-openai') return 'OpenAI / Codex';
-  if (key === 'profile-default') return provider || 'Profile default';
-  return 'Nous Research';
-}
-
-function estimateTextTokens(text: string): number {
-  const normalized = String(text || '').normalize('NFC').trim();
-  if (!normalized) return 0;
-
-  let tokens = 0;
-  let asciiRun = 0;
-  let nonAsciiRun = 0;
-
-  const flush = () => {
-    if (asciiRun > 0) {
-      tokens += Math.max(1, Math.ceil(asciiRun / 4));
-      asciiRun = 0;
-    }
-    if (nonAsciiRun > 0) {
-      tokens += nonAsciiRun;
-      nonAsciiRun = 0;
-    }
-  };
-
-  for (const char of normalized) {
-    if (/\s/.test(char)) {
-      flush();
-      continue;
-    }
-    if (char.charCodeAt(0) <= 0x7F) {
-      asciiRun += 1;
-    } else {
-      nonAsciiRun += 1;
-    }
-  }
-
-  flush();
-  return tokens;
-}
-
-function buildAttachedContextText(resolvedAttachments: ResolvedContextReference[]): string {
-  if (resolvedAttachments.length === 0) return '';
-  const blocks = resolvedAttachments.map(item => {
-    const header = `### ${item.ref}`;
-    const warning = item.warning ? `Warning: ${item.warning}\n` : '';
-    const body = item.content || '[no content extracted]';
-    return `${header}\n${warning}${body}`;
-  }).join('\n\n');
-  return `--- Attached Context ---\n\n${blocks}`;
-}
-
-function extractAttachedImageCount(text: string): number {
-  const match = String(text || '').match(/\[Attached images:\s*(\d+)\]/i);
-  return match ? Math.max(0, Number(match[1]) || 0) : 0;
-}
-
-function estimateMessageTokens(message: Message): number {
-  if (typeof message.tokenCount === 'number' && Number.isFinite(message.tokenCount) && message.tokenCount > 0) {
-    return Math.round(message.tokenCount);
-  }
-
-  const attachedImages = extractAttachedImageCount(message.content);
-  return estimateTextTokens(message.content) + MESSAGE_OVERHEAD_TOKENS + (attachedImages * ESTIMATED_IMAGE_TOKENS);
-}
-
-function parseContextWindowValue(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-    return Math.round(value);
-  }
-
-  const normalized = String(value || '').trim().toLowerCase().replace(/,/g, '');
-  if (!normalized) return null;
-
-  const match = normalized.match(/^(\d+(?:\.\d+)?)([km])?$/);
-  if (!match) return null;
-
-  const amount = Number(match[1]);
-  if (!Number.isFinite(amount) || amount <= 0) return null;
-  const unit = match[2];
-  const multiplier = unit === 'm' ? 1_000_000 : unit === 'k' ? 1_000 : 1;
-  return Math.round(amount * multiplier);
-}
-
-function inferContextWindowFromModelName(modelName: string): number | null {
-  const match = String(modelName || '').toLowerCase().match(/(?:^|[^a-z0-9])(\d+(?:\.\d+)?)([km])(?:[^a-z0-9]|$)/);
-  if (!match) return null;
-  return parseContextWindowValue(`${match[1]}${match[2]}`);
-}
-
-function getModelContextWindow(config: { model?: Record<string, unknown> } | null, modelName: string): number | null {
-  const modelConfig = config?.model;
-  if (modelConfig && typeof modelConfig === 'object') {
-    for (const key of CONTEXT_WINDOW_KEYS) {
-      const parsed = parseContextWindowValue(modelConfig[key]);
-      if (parsed) return parsed;
-    }
-  }
-  return inferContextWindowFromModelName(modelName);
-}
-
-function normalizeToolCalls(input: unknown): ChatToolCall[] | undefined {
-  if (!Array.isArray(input)) return undefined;
-  const calls = input
-    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
-    .map((item) => ({
-      ...item,
-      id: typeof item.id === 'string' ? item.id : undefined,
-      type: typeof item.type === 'string' ? item.type : undefined,
-      name: typeof item.name === 'string' ? item.name : undefined,
-      arguments: typeof item.arguments === 'string' ? item.arguments : undefined,
-      function: item.function && typeof item.function === 'object'
-        ? {
-            name: typeof (item.function as { name?: unknown }).name === 'string'
-              ? String((item.function as { name?: unknown }).name)
-              : undefined,
-            arguments: typeof (item.function as { arguments?: unknown }).arguments === 'string'
-              ? String((item.function as { arguments?: unknown }).arguments)
-              : undefined,
-          }
-        : undefined,
-    } satisfies ChatToolCall));
-
-  return calls.length > 0 ? calls : undefined;
-}
-
-function mergeToolCallDeltas(current: ChatToolCall[], deltas: unknown): ChatToolCall[] {
-  const normalizedDeltas = normalizeToolCalls(deltas);
-  if (!normalizedDeltas?.length) return current;
-
-  const next = [...current];
-  normalizedDeltas.forEach((delta, index) => {
-    const existing = next[index] || {};
-    const existingFunction = existing.function || {};
-    const deltaFunction = delta.function || {};
-    next[index] = {
-      ...existing,
-      ...delta,
-      id: delta.id || existing.id,
-      type: delta.type || existing.type,
-      name: delta.name || existing.name,
-      arguments: `${existing.arguments || ''}${delta.arguments || ''}` || undefined,
-      function: {
-        name: `${existingFunction.name || ''}${deltaFunction.name || ''}` || undefined,
-        arguments: `${existingFunction.arguments || ''}${deltaFunction.arguments || ''}` || undefined,
-      },
-    };
-  });
-
-  return next;
-}
-
-function isMessageRole(value: unknown): value is Message['role'] {
-  return value === 'user' || value === 'assistant' || value === 'system';
-}
-
-function normalizePersistedMessages(input: unknown): Message[] {
-  if (!Array.isArray(input)) return [];
-  return input
-    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
-    .filter(item => isMessageRole(item.role))
-    .map(item => ({
-      role: item.role as Message['role'],
-      content: typeof item.content === 'string' ? item.content : String(item.content ?? ''),
-      timestamp: typeof item.timestamp === 'number' ? item.timestamp : undefined,
-      audioUrl: typeof item.audioUrl === 'string' ? item.audioUrl : undefined,
-      isVoice: item.isVoice === true,
-      tokenCount: typeof item.tokenCount === 'number' ? item.tokenCount : undefined,
-      toolCalls: normalizeToolCalls(item.toolCalls),
-      toolName: typeof item.toolName === 'string' ? item.toolName : undefined,
-      toolResults: Object.prototype.hasOwnProperty.call(item, 'toolResults') ? item.toolResults : undefined,
-    }));
-}
-
-function parseCommandInput(input: string): { id: ChatCommandId; command: string; args: string } | null {
-  const trimmed = String(input || '').trim();
-  if (!trimmed.startsWith('/')) return null;
-  const [commandToken, ...argsTokens] = trimmed.split(/\s+/);
-  const id = commandToken.slice(1).toLowerCase() as ChatCommandId;
-  if (!CHAT_COMMANDS.some(item => item.id === id)) return null;
-  return { id, command: commandToken, args: argsTokens.join(' ') };
-}
-
-function isLocalCommand(commandId: ChatCommandId): boolean {
-  return commandId === 'new' || commandId === 'usage' || commandId === 'status';
-}
-
-function formatUsageStatus(usage: ChatUsage | null): string {
-  if (!usage) return 'Usage unavailable for this session.';
-
-  const tokens = [
-    `prompt ${formatIntegerMetric(usage.promptTokens)}`,
-    `completion ${formatIntegerMetric(usage.completionTokens)}`,
-    `total ${formatIntegerMetric(usage.totalTokens)}`,
-  ].join(' | ');
-
-  const extras: string[] = [];
-  if (typeof usage.cost === 'number' && Number.isFinite(usage.cost)) {
-    extras.push(`cost $${usage.cost.toFixed(6)}`);
-  }
-  if (usage.rateLimitRemaining != null) {
-    extras.push(`rate limit remaining ${formatIntegerMetric(usage.rateLimitRemaining)}`);
-  }
-  if (usage.rateLimitReset != null) {
-    extras.push(`rate limit reset ${String(usage.rateLimitReset)}`);
-  }
-
-  return extras.length > 0 ? `${tokens}\n${extras.join(' | ')}` : tokens;
-}
-
-function formatIntegerMetric(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return 'n/a';
-  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value);
-}
-
-function mergeUsage(current: ChatUsage | null, incoming: ChatUsage | null): ChatUsage | null {
-  if (!incoming) return current;
-  if (!current) return incoming;
-  return {
-    promptTokens: incoming.promptTokens ?? current.promptTokens ?? null,
-    completionTokens: incoming.completionTokens ?? current.completionTokens ?? null,
-    totalTokens: incoming.totalTokens ?? current.totalTokens ?? null,
-    cost: incoming.cost ?? current.cost ?? null,
-    rateLimitRemaining: incoming.rateLimitRemaining ?? current.rateLimitRemaining ?? null,
-    rateLimitReset: incoming.rateLimitReset ?? current.rateLimitReset ?? null,
-  };
-}
-
-function getSessionMessagesStorageKey(profile: string, sessionId: string): string {
-  return `${ACTIVE_CHAT_MESSAGES_KEY_PREFIX}${profile}:${sessionId}`;
-}
-
 // ── Hook ────────────────────────────────────────────────────────
 
 interface UseChatOptions {
@@ -454,469 +50,70 @@ export function useChat({
   requestNonce = 0,
   audioRef,
 }: UseChatOptions) {
+  // ── Dependencies ──────────────────────────────────────────
   const gateway = useGatewayContext();
   const { currentProfile } = useProfiles();
 
-  // ── Config ──────────────────────────────────────────────────
   const preferredModel = gateway.config?.model?.default || 'Qwen3.6-27B-UD-IQ3_XXS';
   const preferredThink = gateway.config?.model?.think ?? 'low';
   const runtimeProvider = getRuntimeProviderKey(gateway.config);
   const runtimeProviderLabel = getRuntimeProviderLabel(gateway.config);
-  const sessionStorageKey = `${ACTIVE_CHAT_SESSION_KEY_PREFIX}${currentProfile}`;
-  const contextWindowTokens = getModelContextWindow(gateway.config as { model?: Record<string, unknown> } | null, preferredModel);
+  const sessionStorageKey = getChatSessionStorageKey(currentProfile);
+  const contextWindowTokens = getModelContextWindow(
+    gateway.config as { model?: Record<string, unknown> } | null,
+    preferredModel,
+  );
 
-  // ── State ───────────────────────────────────────────────────
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  // ── Local state ───────────────────────────────────────────
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
-  const [usage, setUsage] = useState<ChatUsage | null>(null);
-  const [attachments, setAttachments] = useState<ContextReferenceAttachment[]>([]);
-  const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([]);
-  const [uploadingImages, setUploadingImages] = useState(false);
-  const [imageError, setImageError] = useState<string | null>(null);
-  const [newAttachmentKind, setNewAttachmentKind] = useState<ContextReferenceAttachment['kind']>('file');
-  const [newAttachmentValue, setNewAttachmentValue] = useState('');
-  const [resolvedAttachments, setResolvedAttachments] = useState<ResolvedContextReference[]>([]);
-  const [resolvingRefs, setResolvingRefs] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false);
   const [voiceState, setVoiceState] = useState<VoiceState>('idle');
   const [voiceError, setVoiceError] = useState<string | null>(null);
-  const [voiceSupported, setVoiceSupported] = useState(false);
   const [speakingMessageIndex, setSpeakingMessageIndex] = useState<number | null>(null);
+  const voiceSupported =
+    typeof window !== 'undefined' &&
+    typeof navigator !== 'undefined' &&
+    Boolean(navigator.mediaDevices?.getUserMedia) &&
+    typeof MediaRecorder !== 'undefined';
 
-  // ── Refs ────────────────────────────────────────────────────
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const recordedChunksRef = useRef<Blob[]>([]);
-  const voiceSynthesisAbortRef = useRef<AbortController | null>(null);
-  const hydrateRequestRef = useRef(0);
+  // ── Sub-features ──────────────────────────────────────────
+  const {
+    attachments,
+    newAttachmentKind,
+    newAttachmentValue,
+    resolvedAttachments,
+    resolvingRefs,
+    totalResolvedChars,
+    canAddReference,
+    attachedContext,
+    setNewAttachmentKind,
+    setNewAttachmentValue,
+    addAttachment,
+    removeAttachment,
+    clearContextReferences,
+    buildAttachedContext,
+  } = useChatContextFiles({ referenceTemplates });
+
+  const {
+    imageAttachments,
+    uploadingImages,
+    imageError,
+    setImageError,
+    attachImageFiles,
+    removeImage,
+    clearImageAttachments,
+    handlePaste,
+    handleFileSelection,
+  } = useChatUploads({ maxImages: MAX_IMAGES });
+
   const provider = runtimeProvider === 'profile-default' ? undefined : runtimeProvider;
   const model = preferredModel;
 
-  // ── Computed ────────────────────────────────────────────────
-  const currentSessionMeta = activeSessionId ? gateway.sessions[activeSessionId] : null;
-  const currentSessionLabel = currentSessionMeta?.title || activeSessionId || null;
-  const totalResolvedChars = useMemo(
-    () => resolvedAttachments.reduce((acc, item) => acc + item.charCount, 0),
-    [resolvedAttachments],
-  );
-  const canAddReference = useMemo(() => {
-    if (newAttachmentKind === 'diff' || newAttachmentKind === 'staged') {
-      return !attachments.some(item => item.kind === newAttachmentKind);
-    }
-    return Boolean(newAttachmentValue.trim());
-  }, [attachments, newAttachmentKind, newAttachmentValue]);
-  const persistedContextTokens = useMemo(
-    () => messages.reduce((acc, message) => acc + estimateMessageTokens(message), 0),
-    [messages],
-  );
-  const pendingDraftTokens = useMemo(() => {
-    const hasPendingDraft = Boolean(input.trim()) || attachments.length > 0 || imageAttachments.length > 0;
-    if (!hasPendingDraft) return 0;
-    const textSeed = input.trim() || (imageAttachments.length > 0
-      ? 'Analyze the attached images.'
-      : 'Analyze the attached context references and answer from them.');
-    const attachedContext = buildAttachedContextText(resolvedAttachments);
-    const enrichedInput = attachedContext ? `${textSeed}\n\n${attachedContext}` : textSeed;
-    return estimateTextTokens(enrichedInput) + MESSAGE_OVERHEAD_TOKENS + (imageAttachments.length * ESTIMATED_IMAGE_TOKENS);
-  }, [attachments.length, imageAttachments.length, input, resolvedAttachments]);
-  const contextTokensEstimate = persistedContextTokens + pendingDraftTokens;
-  const contextUsagePercent = contextWindowTokens
-    ? Math.min(100, Math.max(0, Math.round((contextTokensEstimate / contextWindowTokens) * 100)))
-    : null;
-
-  // ── Effects: init ───────────────────────────────────────────
-  useEffect(() => {
-    setVoiceSupported(
-      typeof window !== 'undefined'
-      && typeof navigator !== 'undefined'
-      && Boolean(navigator.mediaDevices?.getUserMedia)
-      && typeof MediaRecorder !== 'undefined'
-    );
-  }, []);
-
-
-  useEffect(() => {
-    const delegatedDraft = localStorage.getItem('hermes-chat-draft');
-    if (delegatedDraft) {
-      setInput(delegatedDraft);
-      localStorage.removeItem('hermes-chat-draft');
-    }
-  }, []);
-
-  // ── Effects: session persistence ────────────────────────────
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const storedSessionId = window.localStorage.getItem(sessionStorageKey);
-    if (storedSessionId) { void hydrateSession(storedSessionId); return; }
-    setActiveSessionId(null);
-    setMessages([]);
-  }, [currentProfile, sessionStorageKey]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!requestNonce) return;
-    if (requestedSessionId) { void hydrateSession(requestedSessionId); return; }
-    handleNewChat();
-  }, [requestNonce, requestedSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (activeSessionId) {
-      window.localStorage.setItem(sessionStorageKey, activeSessionId);
-    } else {
-      window.localStorage.removeItem(sessionStorageKey);
-    }
-  }, [activeSessionId, sessionStorageKey]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || !activeSessionId) return;
-    try {
-      window.localStorage.setItem(
-        getSessionMessagesStorageKey(currentProfile, activeSessionId),
-        JSON.stringify(messages),
-      );
-    } catch {
-      // Best-effort only.
-    }
-  }, [activeSessionId, currentProfile, messages]);
-
-  // ── Effects: resolve attachments ────────────────────────────
-  useEffect(() => {
-    if (attachments.length === 0) { setResolvedAttachments([]); return; }
-    let cancelled = false;
-    setResolvingRefs(true);
-    const refStrings = attachments.map(toReferenceString);
-    apiClient.contextReferences.resolve(refStrings)
-      .then(res => {
-        if (cancelled) return;
-        const results = Array.isArray(res.data) ? res.data : [];
-        setResolvedAttachments(results.map((r: ResolvedContextReference, i: number) => ({
-          ref: r.ref || refStrings[i],
-          kind: r.kind || attachments[i]?.kind || 'file',
-          label: r.label || attachments[i]?.value || '',
-          content: r.content || '[no content]',
-          charCount: r.charCount || 0,
-          warning: r.warning,
-        })));
-        setResolvingRefs(false);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setResolvedAttachments(attachments.map((ref, i) => ({
-          ref: refStrings[i],
-          kind: ref.kind,
-          label: ref.value,
-          content: '[Resolution failed]',
-          charCount: 0,
-          warning: 'Could not resolve this reference.',
-        })));
-        setResolvingRefs(false);
-      });
-    return () => { cancelled = true; };
-  }, [attachments]);
-
-  // ── Effects: audio ended ────────────────────────────────────
-
-  // ── Callbacks ───────────────────────────────────────────────
-  const buildAttachedContext = useCallback(() => buildAttachedContextText(resolvedAttachments), [resolvedAttachments]);
-
-  const buildUserContent = useCallback((base: string) => {
-    const context = buildAttachedContext();
-    return context ? `${base}\n\n${context}` : base;
-  }, [buildAttachedContext]);
-
-  const updateLastAssistantMessage = useCallback((updater: (message: Message) => Message) => {
-    setMessages(current => {
-      const copy = [...current];
-      for (let index = copy.length - 1; index >= 0; index -= 1) {
-        if (copy[index].role !== 'assistant') continue;
-        copy[index] = updater(copy[index]);
-        return copy;
-      }
-      return current;
-    });
-  }, []);
-
-  const updateMessageAtIndex = useCallback((index: number, updater: (message: Message) => Message) => {
-    setMessages(current => {
-      if (index < 0 || index >= current.length) return current;
-      const copy = [...current];
-      copy[index] = updater(copy[index]);
-      return copy;
-    });
-  }, []);
-
-  const clearAudioUrl = useCallback((audioUrl: string) => {
-    const normalized = String(audioUrl || '').trim();
-    if (!normalized) return;
-    setMessages(current => {
-      let changed = false;
-      const next = current.map(message => {
-        if (message.audioUrl !== normalized) return message;
-        changed = true;
-        return { ...message, audioUrl: undefined };
-      });
-      return changed ? next : current;
-    });
-  }, []);
-
-  const releaseAudioUrl = useCallback(async (audioUrl: string) => {
-    const normalized = String(audioUrl || '').trim();
-    if (!normalized) return;
-    clearAudioUrl(normalized);
-    const fileName = extractVoiceAudioFileName(normalized);
-    if (!fileName) return;
-    try {
-      await apiClient.voice.deleteAudio(fileName);
-    } catch {
-      // Keep UI responsive even if cleanup fails server-side.
-    }
-  }, [clearAudioUrl]);
-
-  const stopCurrentVoicePlayback = useCallback(() => {
-    if (voiceSynthesisAbortRef.current) {
-      voiceSynthesisAbortRef.current.abort();
-      voiceSynthesisAbortRef.current = null;
-    }
-
-    const audio = audioRef.current;
-    const playingAudioUrl = String(audio?.currentSrc || audio?.src || '').trim();
-    if (audio) {
-      audio.pause();
-      audio.removeAttribute('src');
-      audio.load();
-    }
-
-    setSpeakingMessageIndex(null);
-    setVoiceState('idle');
-
-    if (playingAudioUrl) {
-      void releaseAudioUrl(playingAudioUrl);
-    }
-  }, [audioRef, releaseAudioUrl]);
-
-  const playAudio = useCallback(async (audioUrl: string) => {
-    const audio = audioRef.current;
-    if (!audioUrl || !audio) return;
-    audio.pause();
-    audio.src = audioUrl;
-    audio.load();
-    try {
-      setVoiceState('speaking');
-      await audio.play();
-    } catch (error) {
-      const errorName = typeof error === 'object' && error && 'name' in error ? String(error.name) : '';
-      setVoiceError(
-        errorName === 'NotAllowedError'
-          ? 'Autoplay was blocked. Use the message audio player.'
-          : 'Audio playback failed. Use the message audio player.',
-      );
-      setVoiceState('idle');
-    }
-  }, [audioRef]);
-
-  const playAudioAndWait = useCallback(async (audioUrl: string, signal?: AbortSignal) => {
-    const audio = audioRef.current;
-    if (!audioUrl || !audio) return;
-    if (signal?.aborted) throw createVoiceAbortError();
-
-    await new Promise<void>((resolve, reject) => {
-      const cleanup = () => {
-        audio.removeEventListener('ended', handleEnded);
-        audio.removeEventListener('error', handleError);
-        signal?.removeEventListener('abort', handleAbort);
-      };
-      const handleEnded = () => {
-        cleanup();
-        resolve();
-      };
-      const handleError = () => {
-        cleanup();
-        void releaseAudioUrl(audioUrl);
-        reject(new Error('Audio playback failed'));
-      };
-      const handleAbort = () => {
-        cleanup();
-        audio.pause();
-        audio.removeAttribute('src');
-        audio.load();
-        void releaseAudioUrl(audioUrl);
-        reject(createVoiceAbortError());
-      };
-
-      audio.pause();
-      audio.addEventListener('ended', handleEnded, { once: true });
-      audio.addEventListener('error', handleError, { once: true });
-      signal?.addEventListener('abort', handleAbort, { once: true });
-      audio.src = audioUrl;
-      audio.load();
-      setVoiceState('speaking');
-      audio.play().catch(error => {
-        cleanup();
-        void releaseAudioUrl(audioUrl);
-        reject(error);
-      });
-    });
-  }, [audioRef, releaseAudioUrl]);
-
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    const handler = () => {
-      const finishedAudioUrl = String(audio.currentSrc || audio.src || '').trim();
-      setVoiceState('idle');
-      audio.removeAttribute('src');
-      audio.load();
-      if (finishedAudioUrl) {
-        void releaseAudioUrl(finishedAudioUrl);
-      }
-    };
-    audio.addEventListener('ended', handler);
-    return () => audio.removeEventListener('ended', handler);
-  }, [audioRef, releaseAudioUrl]);
-
-  const speakStreamingText = useCallback(async (text: string, signal?: AbortSignal) => {
-    if (signal?.aborted) throw createVoiceAbortError();
-
-    const response = await apiClient.voice.streamSynthesize(text, { signal });
-    if (!response.ok || !response.body) {
-      throw new Error(`Speech stream failed with HTTP ${response.status}`);
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let playedAnySegment = false;
-
-    while (true) {
-      const { value, done } = await reader.read();
-      const chunk = value ? decoder.decode(value, { stream: !done }) : '';
-      const parsed = parseSseChunk(buffer, chunk);
-      buffer = parsed.buffer;
-
-      for (const event of parsed.events) {
-        if (event.error) {
-          throw new Error(event.error);
-        }
-        if (event.event !== 'voice.audio' || !event.payload || typeof event.payload !== 'object') {
-          continue;
-        }
-
-        const audioUrl = String((event.payload as { audioUrl?: unknown }).audioUrl || '').trim();
-        if (!audioUrl) continue;
-        playedAnySegment = true;
-        await playAudioAndWait(audioUrl, signal);
-      }
-
-      if (done) break;
-    }
-
-    if (!playedAnySegment) {
-      throw new Error('Speech stream returned no audio segments');
-    }
-  }, [playAudioAndWait]);
-
-  const speakText = useCallback(async (
-    text: string,
-    options?: { cacheAudio?: (audioUrl: string) => void; signal?: AbortSignal },
-  ) => {
-    try {
-      await speakStreamingText(text, options?.signal);
-    } catch (error) {
-      if (isVoiceAbortError(error)) return;
-      const response = await apiClient.voice.synthesize(text);
-      options?.cacheAudio?.(response.data.audioUrl);
-      await playAudioAndWait(response.data.audioUrl, options?.signal);
-    }
-  }, [playAudioAndWait, speakStreamingText]);
-
-  const maybeSpeakAssistantReply = useCallback(async (assistantText: string) => {
-    if (!voiceMode || !assistantText.trim()) return;
-    const controller = new AbortController();
-    if (voiceSynthesisAbortRef.current) {
-      voiceSynthesisAbortRef.current.abort();
-    }
-    voiceSynthesisAbortRef.current = controller;
-
-    try {
-      setVoiceError(null);
-      setVoiceState('processing');
-      await speakText(assistantText, {
-        signal: controller.signal,
-        cacheAudio: audioUrl => {
-          updateLastAssistantMessage(message => ({ ...message, audioUrl }));
-        },
-      });
-    } catch (error) {
-      if (isVoiceAbortError(error)) {
-        setVoiceState('idle');
-        return;
-      }
-      setVoiceError('Speech synthesis unavailable.');
-      setVoiceState('idle');
-    } finally {
-      if (voiceSynthesisAbortRef.current === controller) {
-        voiceSynthesisAbortRef.current = null;
-      }
-    }
-  }, [speakText, updateLastAssistantMessage, voiceMode]);
-
-  const speakMessageAt = useCallback(async (messageIndex: number, rawText: string) => {
-    const text = String(rawText || '').trim();
-    if (!text) return;
-    if (speakingMessageIndex === messageIndex && (voiceState === 'processing' || voiceState === 'speaking')) {
-      stopCurrentVoicePlayback();
-      return;
-    }
-    if (voiceState === 'recording') return;
-
-    const controller = new AbortController();
-    if (voiceSynthesisAbortRef.current) {
-      voiceSynthesisAbortRef.current.abort();
-    }
-    voiceSynthesisAbortRef.current = controller;
-
-    const cachedAudioUrl = messages[messageIndex]?.audioUrl;
-    try {
-      setVoiceError(null);
-      setSpeakingMessageIndex(messageIndex);
-      if (cachedAudioUrl) {
-        await playAudioAndWait(cachedAudioUrl, controller.signal);
-        return;
-      }
-
-      setVoiceState('processing');
-      await speakText(text, {
-        signal: controller.signal,
-        cacheAudio: audioUrl => {
-          updateMessageAtIndex(messageIndex, message => ({ ...message, audioUrl }));
-        },
-      });
-    } catch (error) {
-      if (isVoiceAbortError(error)) {
-        setVoiceState('idle');
-        return;
-      }
-      setVoiceError('Speech synthesis unavailable.');
-      setVoiceState('idle');
-    } finally {
-      if (voiceSynthesisAbortRef.current === controller) {
-        voiceSynthesisAbortRef.current = null;
-      }
-      setSpeakingMessageIndex(current => (current === messageIndex ? null : current));
-    }
-  }, [messages, playAudioAndWait, speakText, speakingMessageIndex, stopCurrentVoicePlayback, updateMessageAtIndex, voiceState]);
-
-  const handleMessageAudioEnded = useCallback((audioUrl: string) => {
-    void releaseAudioUrl(audioUrl);
-  }, [releaseAudioUrl]);
-
   const clearPendingAttachments = useCallback(() => {
-    setAttachments([]);
-    setResolvedAttachments([]);
-    setImageAttachments([]);
-  }, []);
+    clearContextReferences();
+    clearImageAttachments();
+  }, [clearContextReferences, clearImageAttachments]);
 
   const resetComposer = useCallback(() => {
     setInput('');
@@ -924,450 +121,87 @@ export function useChat({
     setNewAttachmentValue('');
     setImageError(null);
     setVoiceError(null);
-  }, [clearPendingAttachments]);
+  }, [clearPendingAttachments, setImageError, setNewAttachmentValue]);
 
-  const readPersistedMessages = useCallback((sessionId: string | null): Message[] => {
-    if (!sessionId || typeof window === 'undefined') return [];
-    try {
-      const raw = window.localStorage.getItem(getSessionMessagesStorageKey(currentProfile, sessionId));
-      if (!raw) return [];
-      return normalizePersistedMessages(JSON.parse(raw));
-    } catch {
-      return [];
-    }
-  }, [currentProfile]);
+  const sessionMessagesStorageKey = useCallback(
+    (sessionId: string) => getChatMessagesStorageKey(currentProfile, sessionId),
+    [currentProfile],
+  );
 
-  const hydrateSession = useCallback(async (sessionId: string | null) => {
-    const requestId = ++hydrateRequestRef.current;
-    if (!sessionId) { setActiveSessionId(null); setMessages([]); setUsage(null); return; }
-    const draftMessages = readPersistedMessages(sessionId);
-    setActiveSessionId(sessionId);
-    setUsage(null);
-    if (draftMessages.length > 0) {
-      setMessages(draftMessages);
-    }
-    try {
-      const response = await apiClient.sessions.transcript(sessionId);
-      if (hydrateRequestRef.current !== requestId) return;
-      const transcript = Array.isArray(response.data)
-        ? response.data
-            .filter((entry): entry is Message => entry?.role === 'user' || entry?.role === 'assistant' || entry?.role === 'system')
-            .map((entry) => ({
-              role: entry.role,
-              content: typeof entry.content === 'string' ? entry.content : String(entry.content ?? ''),
-              timestamp: entry.timestamp,
-              tokenCount: typeof (entry as { token_count?: unknown }).token_count === 'number'
-                ? Number((entry as { token_count?: unknown }).token_count)
-                : undefined,
-              toolCalls: normalizeToolCalls((entry as { tool_calls?: unknown }).tool_calls),
-              toolName: typeof (entry as { tool_name?: unknown }).tool_name === 'string'
-                ? String((entry as { tool_name?: unknown }).tool_name)
-                : undefined,
-              toolResults: Object.prototype.hasOwnProperty.call(entry as object, 'tool_results')
-                ? (entry as { tool_results?: unknown }).tool_results
-                : undefined,
-            }))
-        : [];
-      setMessages(transcript.length > 0 ? transcript : draftMessages);
-    } catch {
-      if (hydrateRequestRef.current !== requestId) return;
-      if (draftMessages.length === 0) {
-        setMessages([]);
-      }
-    }
-  }, [readPersistedMessages]);
-
-  const handleNewChat = useCallback(() => {
-    setActiveSessionId(null);
-    setMessages([]);
-    setUsage(null);
-    resetComposer();
-    if (typeof window !== 'undefined') {
-      window.localStorage.removeItem(sessionStorageKey);
-    }
-  }, [resetComposer, sessionStorageKey]);
-
-  const addAttachment = useCallback(() => {
-    const template = referenceTemplates.find(item => item.kind === newAttachmentKind);
-    if (!template) return;
-    if ((newAttachmentKind === 'diff' || newAttachmentKind === 'staged') && attachments.some(item => item.kind === newAttachmentKind)) return;
-    if ((newAttachmentKind === 'file' || newAttachmentKind === 'folder' || newAttachmentKind === 'git' || newAttachmentKind === 'url') && !newAttachmentValue.trim()) return;
-    const value = newAttachmentKind === 'diff' || newAttachmentKind === 'staged' ? template.label : newAttachmentValue.trim();
-    setAttachments(current => [...current, { id: `${newAttachmentKind}_${Date.now()}`, kind: newAttachmentKind, value }]);
-    setNewAttachmentValue('');
-  }, [attachments, newAttachmentKind, newAttachmentValue]);
-
-  const removeAttachment = useCallback((id: string) => {
-    setAttachments(current => current.filter(item => item.id !== id));
-  }, []);
-
-  const attachImageFiles = useCallback(async (files: File[]) => {
-    if (files.length === 0) return;
-    const availableSlots = MAX_IMAGES - imageAttachments.length;
-    const selectedFiles = files.filter(file => file.type.startsWith('image/')).slice(0, availableSlots);
-    if (selectedFiles.length === 0) {
-      setImageError(imageAttachments.length >= MAX_IMAGES ? `Maximum ${MAX_IMAGES} images per message.` : 'No usable image detected.');
-      return;
-    }
-    setUploadingImages(true);
-    setImageError(null);
-    try {
-      const uploaded = await Promise.all(selectedFiles.map(async file => {
-        const normalized = await normalizeImageFile(file);
-        const response = await apiClient.images.upload(normalized.fileName, normalized.dataUrl);
-        return { ...response.data, dataUrl: normalized.dataUrl, width: normalized.width, height: normalized.height } satisfies ImageAttachment;
-      }));
-      setImageAttachments(current => [...current, ...uploaded]);
-    } catch (error) {
-      console.error(error);
-      setImageError("Could not add the image.");
-    } finally {
-      setUploadingImages(false);
-    }
-  }, [imageAttachments.length]);
-
-  const removeImage = useCallback((id: string) => {
-    setImageAttachments(current => current.filter(item => item.id !== id));
-  }, []);
-
-  const handlePaste = useCallback(async (event: React.ClipboardEvent<HTMLElement>) => {
-    const files = extractImageFilesFromClipboard(event.clipboardData);
-    if (files.length === 0) return;
-    event.preventDefault();
-    await attachImageFiles(files);
-  }, [attachImageFiles]);
-
-  const handleFileSelection = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files || []);
-    await attachImageFiles(files);
-    event.target.value = '';
-  }, [attachImageFiles]);
-
-  const appendLocalAssistantMessage = useCallback((content: string) => {
-    if (!content.trim()) return;
-    setMessages(current => [...current, { role: 'assistant', content, timestamp: Date.now() }]);
-  }, []);
-
-  const formatStatusMessage = useCallback(() => {
-    const backend = gateway.builderStatus;
-    const gatewayRuntime = gateway.health;
-    const directGateway = gateway.directGatewayHealth;
-    const processStatus = gateway.processStatus?.status || 'unknown';
-    const processPort = gateway.processStatus?.port ?? 'n/a';
-    const session = activeSessionId || 'none';
-
-    return [
-      `profile ${currentProfile}`,
-      `backend ${backend}`,
-      `gateway ${gatewayRuntime}`,
-      `direct ${directGateway}`,
-      `process ${processStatus} on :${processPort}`,
-      `provider ${runtimeProviderLabel}`,
-      `model ${preferredModel}`,
-      `session ${session}`,
-    ].join('\n');
-  }, [
-    activeSessionId,
-    currentProfile,
-    gateway.builderStatus,
-    gateway.directGatewayHealth,
-    gateway.health,
-    gateway.processStatus?.port,
-    gateway.processStatus?.status,
-    preferredModel,
-    runtimeProviderLabel,
-  ]);
-
-  const send = useCallback(async (overrideInput?: string) => {
-    const draftInput = typeof overrideInput === 'string' ? overrideInput : input;
-    const trimmedInput = draftInput.trim();
-    const hasNoContent = !trimmedInput && attachments.length === 0 && imageAttachments.length === 0;
-    if (hasNoContent || streaming || uploadingImages || voiceState === 'recording' || voiceState === 'processing') return;
-
-    const command = parseCommandInput(trimmedInput);
-    if (command && attachments.length === 0 && imageAttachments.length === 0 && isLocalCommand(command.id)) {
-      if (command.id === 'new') {
-        handleNewChat();
-      } else if (command.id === 'usage') {
-        appendLocalAssistantMessage(formatUsageStatus(usage));
-      } else if (command.id === 'status') {
-        appendLocalAssistantMessage(formatStatusMessage());
-      }
-      setInput('');
-      return;
-    }
-
-    const textSeed = trimmedInput || (imageAttachments.length > 0
-      ? 'Analyze the attached images.'
-      : 'Analyze the attached context references and answer from them.');
-    const enrichedInput = buildUserContent(textSeed);
-    const displayBlocks = [enrichedInput];
-    if (imageAttachments.length > 0) displayBlocks.push(`[Attached images: ${imageAttachments.length}]`);
-    const displayContent = displayBlocks.join('\n\n');
-    const userMsg: Message = { role: 'user', content: displayContent, timestamp: Date.now() };
-    const currentImages = imageAttachments;
-    const effectiveModel = model;
-
-    let sessionId = activeSessionId;
-    if (!sessionId) {
-      try {
-        const created = await apiClient.sessions.create({ source: 'api-server', model: effectiveModel });
-        sessionId = created.data?.id || null;
-        if (sessionId) setActiveSessionId(sessionId);
-      } catch {
-        sessionId = null;
-      }
-    }
-
-    setInput('');
-    setStreaming(true);
-    setUsage(null);
-    clearPendingAttachments();
-    setMessages(current => [...current, userMsg, { role: 'assistant', content: '', timestamp: Date.now() }]);
-
-    const payloadMessages = [
-      ...messages.map(m => ({ role: m.role, content: m.content })),
-      { role: 'user' as const, content: buildVisionContent(enrichedInput, currentImages) },
-    ];
-
-    let finalAssistantText = '';
-    let finalAssistantToolCalls: ChatToolCall[] | undefined;
-    let finalAssistantToolName: string | undefined;
-    let finalAssistantToolResults: unknown;
-    let persistedByGateway = false;
-    let accumulatedUsage: ChatUsage | null = null;
-
-    try {
-      const response = await apiClient.gateway.streamChat({
-        model: effectiveModel,
-        provider,
-        think: preferredThink,
-        messages: payloadMessages,
-        stream: true,
-        session_id: sessionId || undefined,
-        source: 'api-server',
-      });
-      if (!response.ok) throw new Error('Stream failed');
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('Reader unavailable');
-
-      const decoder = new TextDecoder();
-      let parserBuffer = '';
-      let accumulated = '';
-      let accumulatedToolCalls: ChatToolCall[] = [];
-
-      const consumeParsedEvents = (parsedEvents: ReturnType<typeof parseSseChunk>['events']) => {
-        for (const event of parsedEvents) {
-          if (event.done || event.malformed) continue;
-
-          if (event.usage) {
-            accumulatedUsage = mergeUsage(accumulatedUsage, event.usage);
-            setUsage(current => mergeUsage(current, event.usage));
-          }
-
-          if (event.error && !accumulated) {
-            accumulated = event.error;
-            updateLastAssistantMessage(message => ({ ...message, content: accumulated }));
-          }
-
-          const toolCallDeltas = normalizeToolCallDeltas(event.toolCallDeltas);
-          if (Array.isArray(toolCallDeltas) && toolCallDeltas.length > 0) {
-            accumulatedToolCalls = mergeToolCallDeltas(accumulatedToolCalls, toolCallDeltas);
-            finalAssistantToolCalls = accumulatedToolCalls;
-            updateLastAssistantMessage(message => ({ ...message, toolCalls: accumulatedToolCalls }));
-          }
-
-          if (!event.contentDelta) continue;
-          accumulated += event.contentDelta;
-          updateLastAssistantMessage(message => ({ ...message, content: accumulated }));
-        }
-      };
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const text = decoder.decode(value, { stream: true });
-        const parsedChunk = parseSseChunk(parserBuffer, text);
-        parserBuffer = parsedChunk.buffer;
-        consumeParsedEvents(parsedChunk.events);
-      }
-
-      if (parserBuffer.trim()) {
-        const finalParsedChunk = parseSseChunk(parserBuffer, '\n\n');
-        consumeParsedEvents(finalParsedChunk.events);
-      }
-
-      finalAssistantText = accumulated;
-      finalAssistantToolCalls = accumulatedToolCalls.length > 0 ? accumulatedToolCalls : undefined;
-      void maybeSpeakAssistantReply(accumulated);
-    } catch {
-      try {
-        const response = await apiClient.gateway.chat({
-          model: effectiveModel,
-          provider,
-          think: preferredThink,
-          messages: payloadMessages,
-          session_id: sessionId || undefined,
-          source: 'api-server',
-        });
-        const assistantMessage = response.data.choices?.[0]?.message || {};
-        const content = assistantMessage.content || 'No response.';
-        finalAssistantText = content;
-        finalAssistantToolCalls = normalizeToolCalls(assistantMessage.tool_calls);
-        finalAssistantToolName = typeof assistantMessage.tool_name === 'string' ? assistantMessage.tool_name : undefined;
-        finalAssistantToolResults = Object.prototype.hasOwnProperty.call(assistantMessage, 'tool_results')
-          ? assistantMessage.tool_results
-          : undefined;
-        accumulatedUsage = normalizeGatewayUsage(response.data);
-        setUsage(accumulatedUsage);
-        persistedByGateway = true;
-        if (!sessionId && response.data?.session_id) {
-          sessionId = String(response.data.session_id);
-          setActiveSessionId(sessionId);
-        }
-        updateLastAssistantMessage(message => ({
-          ...message,
-          content,
-          toolCalls: finalAssistantToolCalls,
-          toolName: finalAssistantToolName,
-          toolResults: finalAssistantToolResults,
-        }));
-        void maybeSpeakAssistantReply(content);
-      } catch {
-        finalAssistantText = 'Gateway unreachable. Verify that the Hermes Gateway is running.';
-        updateLastAssistantMessage(message => ({ ...message, content: finalAssistantText }));
-      }
-    } finally {
-      if (accumulatedUsage) {
-        setUsage(current => mergeUsage(current, accumulatedUsage));
-      }
-
-      if (sessionId && !persistedByGateway && (finalAssistantText || finalAssistantToolCalls?.length || finalAssistantToolName || finalAssistantToolResults != null)) {
-        apiClient.sessions.appendMessages(sessionId, {
-          model: effectiveModel,
-          source: 'api-server',
-          messages: [
-            { role: 'user', content: userMsg.content, timestamp: userMsg.timestamp },
-            {
-              role: 'assistant',
-              content: finalAssistantText,
-              timestamp: Date.now(),
-              token_count: accumulatedUsage?.completionTokens ?? accumulatedUsage?.totalTokens ?? undefined,
-              tool_calls: finalAssistantToolCalls,
-              tool_name: finalAssistantToolName,
-              tool_results: finalAssistantToolResults,
-            },
-          ],
-        }).catch(() => {});
-      }
-      setStreaming(false);
-    }
-  }, [
-    activeSessionId,
-    appendLocalAssistantMessage,
-    attachments.length,
-    buildUserContent,
-    clearPendingAttachments,
-    formatStatusMessage,
-    handleNewChat,
-    imageAttachments,
-    input,
+  const {
     messages,
-    model,
-    maybeSpeakAssistantReply,
-    preferredThink,
-    provider,
-    streaming,
-    updateLastAssistantMessage,
-    uploadingImages,
+    setMessages,
+    activeSessionId,
+    setActiveSessionId,
     usage,
-    voiceState,
-  ]);
+    setUsage,
+    hydrateSession,
+    handleNewChat,
+  } = useChatSession({
+    currentProfile,
+    requestedSessionId,
+    requestNonce,
+    sessionStorageKey,
+    sessionMessagesStorageKey,
+    resetComposer,
+  });
 
-  const handleVoiceToggle = useCallback(async () => {
-    if (streaming || uploadingImages) return;
-    if (voiceState === 'recording') { mediaRecorderRef.current?.stop(); return; }
-    if (voiceState === 'processing' || voiceState === 'speaking') { stopCurrentVoicePlayback(); return; }
-    if (!voiceSupported) { setVoiceError('Microphone unavailable in this browser.'); return; }
-    try {
-      setVoiceError(null);
-      audioRef.current?.pause();
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaStreamRef.current = stream;
-      recordedChunksRef.current = [];
-      const preferredMimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
-      const recorder = new MediaRecorder(stream, { mimeType: preferredMimeType });
-      recorder.addEventListener('dataavailable', event => { if (event.data.size > 0) recordedChunksRef.current.push(event.data); });
-      recorder.addEventListener('stop', async () => {
-        stopMicrophoneCapture(mediaRecorderRef, mediaStreamRef);
-        const blob = new Blob(recordedChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
-        recordedChunksRef.current = [];
-        const effectiveModel = model;
-        if (blob.size === 0) { setVoiceState('idle'); return; }
-        try {
-          setVoiceState('processing');
-          setVoiceError(null);
-          let sessionId = activeSessionId;
-          if (!sessionId) {
-            try {
-              const created = await apiClient.sessions.create({ source: 'api-server', model: effectiveModel });
-              sessionId = created.data?.id || null;
-              if (sessionId) setActiveSessionId(sessionId);
-            } catch {
-              sessionId = null;
-            }
-          }
-          const audioDataUrl = await readBlobAsDataUrl(blob);
-          const contextText = buildAttachedContext();
-          const response = await apiClient.voice.respond({ model: effectiveModel, think: preferredThink, messages: messages.map(m => ({ role: m.role, content: m.content })), audioDataUrl, contextText, images: imageAttachments });
-          const now = Date.now();
-          const userVoiceMessage: Message = { role: 'user', content: response.data.transcript, timestamp: now, isVoice: true };
-          const assistantVoiceMessage: Message = {
-            role: 'assistant',
-            content: response.data.assistantText,
-            timestamp: now,
-            audioUrl: response.data.audioUrl,
-            isVoice: true,
-          };
-          clearPendingAttachments();
-          setMessages(current => [...current, userVoiceMessage, assistantVoiceMessage]);
-          if (sessionId) {
-            apiClient.sessions.appendMessages(sessionId, {
-              model: effectiveModel,
-              source: 'api-server',
-              messages: [
-                { role: 'user', content: userVoiceMessage.content, timestamp: userVoiceMessage.timestamp },
-                { role: 'assistant', content: assistantVoiceMessage.content, timestamp: assistantVoiceMessage.timestamp },
-              ],
-            }).catch(() => {});
-          }
-          await playAudio(response.data.audioUrl);
-        } catch (error) {
-          console.error(error);
-          setVoiceError('Voice pipeline failed. Check STT, Kokoro TTS, and the gateway.');
-          setVoiceState('idle');
-        }
-      });
-      mediaRecorderRef.current = recorder;
-      recorder.start(250);
-      setVoiceState('recording');
-    } catch (error) {
-      console.error(error);
-      stopMicrophoneCapture(mediaRecorderRef, mediaStreamRef);
-      setVoiceError('Microphone access denied or unavailable.');
-      setVoiceState('idle');
-    }
-  }, [activeSessionId, audioRef, buildAttachedContext, clearPendingAttachments, imageAttachments, messages, model, playAudio, preferredThink, stopCurrentVoicePlayback, streaming, uploadingImages, voiceState, voiceSupported]);
+  useChatDraft({ setInput });
 
-  // ── Voice label ─────────────────────────────────────────────
-  const voiceStatusLabel = voiceState === 'recording' ? 'Recording...'
-    : voiceState === 'processing' ? 'Transcription + reply + TTS...'
-    : voiceState === 'speaking' ? 'Playing audio'
-    : voiceMode ? 'Voice mode active' : 'Voice mode inactive';
+  // ── Computed: token estimates ─────────────────────────────
+  const tokenEstimates: ChatTokenEstimates = useChatTokenEstimates({
+    messages, input,
+    attachmentsLength: attachments.length,
+    imageAttachments, attachedContext,
+    contextWindowTokens: contextWindowTokens ?? 0,
+  });
 
+  // ── Computed: session label ───────────────────────────────
+  const currentSessionMeta = activeSessionId ? gateway.sessions[activeSessionId] : null;
+  const currentSessionLabel = currentSessionMeta?.title || activeSessionId || null;
+
+  // ── Computed: labels ──────────────────────────────────────
+  const voiceStatusLabel = getVoiceStatusLabel(voiceState, voiceMode);
   const contextStatusLabel = resolvingRefs
     ? `Resolving ${attachments.length} reference(s)...`
     : `${attachments.length} text reference(s) - ${totalResolvedChars} chars - ${imageAttachments.length} image(s)`;
+
+  // ── Commands ──────────────────────────────────────────────
+  const buildUserContent = useCallback((base: string) => {
+    const context = buildAttachedContext();
+    return context ? `${base}\n\n${context}` : base;
+  }, [buildAttachedContext]);
+
+  const { handleLocalCommand } = useChatLocalCommands({
+    activeSessionId, currentProfile,
+    gatewayBuilderStatus: gateway.builderStatus,
+    gatewayHealth: gateway.health,
+    gatewayDirectHealth: gateway.directGatewayHealth,
+    gatewayProcessStatus: gateway.processStatus,
+    preferredModel, runtimeProviderLabel, usage,
+    handleNewChat, setMessages,
+  });
+
+  // ── Audio & Messages ──────────────────────────────────────
+  const {
+    maybeSpeakAssistantReply,
+    speakMessageAt,
+    handleMessageAudioEnded,
+    handleVoiceToggle,
+  } = useChatAudio({
+    audioRef, streaming, uploadingImages, voiceMode, voiceState, voiceSupported,
+    speakingMessageIndex, setVoiceError, setVoiceState, setSpeakingMessageIndex,
+    activeSessionId, setActiveSessionId, model, preferredThink,
+    messages, imageAttachments, buildAttachedContext, clearPendingAttachments, setMessages,
+  });
+
+  const { send } = useChatMessages({
+    input, setInput, streaming, setStreaming, uploadingImages, voiceState,
+    attachmentsCount: attachments.length, imageAttachments,
+    messages, setMessages, activeSessionId, setActiveSessionId, setUsage,
+    model, provider, preferredThink, buildUserContent, clearPendingAttachments,
+    maybeSpeakAssistantReply, handleLocalCommand,
+  });
 
   // ── Return ──────────────────────────────────────────────────
   return {
@@ -1381,7 +215,9 @@ export function useChat({
     currentSessionLabel,
     totalResolvedChars, canAddReference,
     voiceStatusLabel, contextStatusLabel,
-    contextTokensEstimate, contextWindowTokens, contextUsagePercent,
+    contextTokensEstimate: tokenEstimates.contextTokensEstimate,
+    contextWindowTokens,
+    contextUsagePercent: tokenEstimates.contextUsagePercent,
     preferredModel, runtimeProvider, runtimeProviderLabel, chatCommands: CHAT_COMMANDS,
     // Setters
     setInput, setVoiceMode,

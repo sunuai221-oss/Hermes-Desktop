@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
+import * as api from '../api';
 import { useProfiles } from '../contexts/ProfileContext';
 import { useRuntimeStatus } from '../hooks/useRuntimeStatus';
 import { useGatewayContext } from '../contexts/GatewayContext';
@@ -8,30 +9,31 @@ import { Card } from '../components/Card';
 import { ChatToolbar } from '../components/chat/ChatToolbar';
 import { ChatMessages } from '../components/chat/ChatMessages';
 import { ChatInput } from '../components/chat/ChatInput';
+import {
+  CHAT_SHOW_THINKING_KEY,
+  CHAT_SHOW_TOOLS_KEY,
+  readChatPreference,
+  writeChatPreference,
+} from '../features/chat/chatStorage';
+import type { AgentWorkspace } from '../types';
 
 interface Props {
   requestedSessionId?: string | null;
   requestNonce?: number;
 }
 
-const CHAT_SHOW_THINKING_KEY = 'hermes_chat_show_thinking';
-const CHAT_SHOW_TOOLS_KEY = 'hermes_chat_show_tools';
-
-function readChatTogglePreference(key: string, defaultValue: boolean): boolean {
-  if (typeof window === 'undefined') return defaultValue;
-  const raw = window.localStorage.getItem(key);
-  if (raw == null) return defaultValue;
-  return raw === '1';
-}
-
 export function ChatPage({ requestedSessionId = null, requestNonce = 0 }: Props) {
   const gateway = useGatewayContext();
-  const { currentProfile, gatewayStatus } = useProfiles();
-  const { status: chatRuntimeStatus } = useRuntimeStatus(gateway, gatewayStatus.status);
+  const { currentProfile } = useProfiles();
+  const { status: chatRuntimeStatus } = useRuntimeStatus(gateway);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
-  const [showThinking, setShowThinking] = useState(() => readChatTogglePreference(CHAT_SHOW_THINKING_KEY, true));
-  const [showTools, setShowTools] = useState(() => readChatTogglePreference(CHAT_SHOW_TOOLS_KEY, false));
+  const [showThinking, setShowThinking] = useState(() => readChatPreference(CHAT_SHOW_THINKING_KEY, true));
+  const [showTools, setShowTools] = useState(() => readChatPreference(CHAT_SHOW_TOOLS_KEY, false));
+  const [workspaces, setWorkspaces] = useState<AgentWorkspace[]>([]);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('');
+  const [importingWorkspace, setImportingWorkspace] = useState(false);
+  const [workspaceImportError, setWorkspaceImportError] = useState('');
 
   const chat = useChat({
     requestedSessionId,
@@ -40,14 +42,43 @@ export function ChatPage({ requestedSessionId = null, requestNonce = 0 }: Props)
   });
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem(CHAT_SHOW_THINKING_KEY, showThinking ? '1' : '0');
+    writeChatPreference(CHAT_SHOW_THINKING_KEY, showThinking);
   }, [showThinking]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem(CHAT_SHOW_TOOLS_KEY, showTools ? '1' : '0');
+    writeChatPreference(CHAT_SHOW_TOOLS_KEY, showTools);
   }, [showTools]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.agentStudio.workspaces()
+      .then(response => {
+        if (cancelled) return;
+        const nextWorkspaces = Array.isArray(response.data.workspaces) ? response.data.workspaces : [];
+        setWorkspaces(nextWorkspaces);
+        setSelectedWorkspaceId(current => current || nextWorkspaces[0]?.id || '');
+      })
+      .catch(() => {
+        if (!cancelled) setWorkspaceImportError('Could not load workspaces.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const importWorkspace = async () => {
+    if (!selectedWorkspaceId || importingWorkspace) return;
+    setImportingWorkspace(true);
+    setWorkspaceImportError('');
+    try {
+      const response = await api.agentStudio.generatePrompt(selectedWorkspaceId);
+      chat.setInput(`${response.data.prompt}\n\n## Task\n`);
+    } catch {
+      setWorkspaceImportError('Could not import workspace.');
+    } finally {
+      setImportingWorkspace(false);
+    }
+  };
 
   return (
     <motion.div
@@ -74,6 +105,12 @@ export function ChatPage({ requestedSessionId = null, requestNonce = 0 }: Props)
           onVoiceModeToggle={() => chat.setVoiceMode(v => !v)}
           hasMessages={chat.messages.length > 0 || !!chat.activeSessionId}
           onNewChat={chat.handleNewChat}
+          workspaces={workspaces}
+          selectedWorkspaceId={selectedWorkspaceId}
+          importingWorkspace={importingWorkspace}
+          workspaceImportError={workspaceImportError}
+          onWorkspaceChange={setSelectedWorkspaceId}
+          onImportWorkspace={importWorkspace}
         />
 
         <Card className="flex-1 flex flex-col p-0 overflow-hidden min-h-[60vh]">

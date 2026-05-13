@@ -19,7 +19,7 @@ export interface GatewayState {
 }
 
 export interface GatewayProcessStatus {
-  status: 'online' | 'offline';
+  status: 'online' | 'degraded' | 'offline';
   port?: number | null;
   pid?: number;
   gateway_state?: 'starting' | 'running' | 'stopped';
@@ -32,6 +32,13 @@ export interface GatewayProcessStatus {
 
 export interface GatewayHook {
   builderStatus: ConnectionStatus;
+  runtimeStatus: ConnectionStatus;
+  gatewayHealth: ConnectionStatus;
+  gatewayProcessStatus: GatewayProcessStatus | null;
+  lastCheckedAt: string | null;
+  refreshRuntime: () => Promise<void>;
+  startGateway: (profileName?: string, port?: number) => Promise<void>;
+  stopGateway: (profileName?: string) => Promise<void>;
   state: GatewayState | null;
   health: ConnectionStatus;
   directGatewayHealth: ConnectionStatus;
@@ -135,6 +142,91 @@ export interface CronOutputEntry {
   fileName: string;
   modifiedAt: string;
   contentPreview: string;
+}
+
+export type KanbanStatus = 'triage' | 'todo' | 'ready' | 'running' | 'blocked' | 'done' | 'archived';
+
+export interface KanbanBoard {
+  slug: string;
+  name?: string;
+  description?: string;
+  icon?: string;
+  color?: string;
+  created_at?: number | null;
+  archived?: boolean;
+  db_path?: string;
+  is_current?: boolean;
+  counts?: Partial<Record<KanbanStatus, number>>;
+  total?: number;
+}
+
+export interface KanbanTask {
+  id: string;
+  title: string;
+  body?: string | null;
+  assignee?: string | null;
+  status: KanbanStatus;
+  priority?: number;
+  tenant?: string | null;
+  workspace_kind?: string;
+  workspace_path?: string | null;
+  created_by?: string | null;
+  created_at?: number | null;
+  started_at?: number | null;
+  completed_at?: number | null;
+  result?: string | null;
+  skills?: string[];
+  max_retries?: number | null;
+}
+
+export interface KanbanComment {
+  author: string;
+  body: string;
+  created_at: number;
+}
+
+export interface KanbanEvent {
+  kind: string;
+  payload?: unknown;
+  created_at: number;
+  run_id?: number | null;
+}
+
+export interface KanbanRun {
+  id: number;
+  profile?: string | null;
+  step_key?: string | null;
+  status?: string | null;
+  outcome?: string | null;
+  summary?: string | null;
+  error?: string | null;
+  metadata?: unknown;
+  worker_pid?: number | null;
+  started_at?: number | null;
+  ended_at?: number | null;
+}
+
+export interface KanbanTaskDetail {
+  task: KanbanTask;
+  latest_summary?: string | null;
+  parents: string[];
+  children: string[];
+  comments: KanbanComment[];
+  events: KanbanEvent[];
+  runs: KanbanRun[];
+}
+
+export interface KanbanStats {
+  by_status: Partial<Record<KanbanStatus, number>>;
+  by_assignee: Record<string, number | Partial<Record<KanbanStatus, number>>>;
+  oldest_ready_age_seconds?: number | null;
+  now?: number;
+}
+
+export interface KanbanAssignee {
+  name: string;
+  on_disk?: boolean;
+  counts?: Partial<Record<KanbanStatus, number>>;
 }
 
 export type ModelThinkMode = boolean | 'low' | 'medium' | 'high';
@@ -379,4 +471,83 @@ export interface AgentProfile {
   createdAt: string;
   updatedAt: string;
   lastAppliedAt?: string;
+}
+
+export interface AgentDefinition {
+  id: string;
+  source: string;
+  sourcePath?: string;
+  name: string;
+  slug: string;
+  description?: string;
+  division?: string;
+  color?: string;
+  emoji?: string;
+  vibe?: string;
+  soul: string;
+  workflow?: string;
+  deliverables?: string;
+  successMetrics?: string;
+  preferredSkills?: string[];
+  preferredToolsets?: string[];
+  defaultModel?: string;
+  tags?: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type WorkspaceAgentRole = 'orchestrator' | 'worker' | 'reviewer' | 'qa' | 'observer';
+export type WorkspaceEdgeKind = 'handoff' | 'review' | 'qa' | 'broadcast' | 'escalation';
+
+export interface AgentWorkspace {
+  id: string;
+  name: string;
+  description?: string;
+  sharedContext: string;
+  commonRules: string;
+  defaultMode: 'prompt' | 'delegate' | 'profiles';
+  nodes: WorkspaceAgentNode[];
+  edges: WorkspaceAgentEdge[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceAgentNode {
+  id: string;
+  agentId: string;
+  role: WorkspaceAgentRole;
+  label?: string;
+  profileName?: string;
+  modelOverride?: string;
+  toolsets?: string[];
+  skills?: string[];
+  position: { x: number; y: number };
+}
+
+export interface WorkspaceAgentEdge {
+  id: string;
+  fromNodeId: string;
+  toNodeId: string;
+  kind: WorkspaceEdgeKind;
+  template?: string;
+}
+
+export interface AgentWorkspaceExecutionRun {
+  nodeId: string;
+  agentId: string;
+  label: string;
+  role: WorkspaceAgentRole;
+  profileName?: string;
+  output?: string;
+  response?: unknown;
+}
+
+export interface AgentWorkspaceExecutionResult {
+  success: true;
+  mode: AgentWorkspace['defaultMode'];
+  status: 'ready' | 'completed';
+  prompt: string;
+  output?: string;
+  runs?: AgentWorkspaceExecutionRun[];
+  response?: unknown;
 }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import type { AxiosError } from 'axios';
-import { Save, Settings, RefreshCw, Zap, Eye, MessageSquare, AlertTriangle, DatabaseZap, Activity, FileText, ShieldCheck, Archive, Copy } from 'lucide-react';
+import { Save, Settings, RefreshCw, Zap, Eye, MessageSquare, AlertTriangle, DatabaseZap, Activity, FileText, ShieldCheck, Archive, Copy, GitBranchPlus } from 'lucide-react';
 import { Card } from '../components/Card';
 import { StatusBadge } from '../components/StatusBadge';
 import { useGatewayContext } from '../contexts/GatewayContext';
@@ -720,6 +720,53 @@ export function ConfigPage() {
         </Card>
       </div>
 
+
+        {/* Delegation Settings */}
+        <Card className="p-6">
+          <SectionTitle icon={<GitBranchPlus size={16} />} title="Delegation" />
+          <p className="mb-4 text-xs text-muted-foreground">
+            Default settings for subagent delegation. These values control max_iterations, toolsets, and model overrides when delegating tasks.
+          </p>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <Field
+              label="Max iterations"
+              type="number"
+              value={String(config.delegation?.max_iterations ?? 50)}
+              onChange={v => update(['delegation', 'max_iterations'], parseInt(v, 10) || 50)}
+            />
+            <Field
+              label="Default toolsets"
+              value={(config.delegation?.default_toolsets || ['terminal', 'file', 'web']).join(', ')}
+              onChange={v => update(['delegation', 'default_toolsets'], v.split(',').map(s => s.trim()).filter(Boolean))}
+              placeholder="terminal, file, web"
+            />
+            <Field
+              label="Model override"
+              value={config.delegation?.model || ''}
+              onChange={v => update(['delegation', 'model'], v || undefined)}
+              placeholder="google/gemini-2.0-flash"
+            />
+            <Field
+              label="Provider override"
+              value={config.delegation?.provider || ''}
+              onChange={v => update(['delegation', 'provider'], v || undefined)}
+              placeholder="nous"
+            />
+            <Field
+              label="Base URL override"
+              value={config.delegation?.base_url || ''}
+              onChange={v => update(['delegation', 'base_url'], v || undefined)}
+              placeholder="http://localhost:1234/v1"
+            />
+            <Field
+              label="API key override"
+              value={config.delegation?.api_key || ''}
+              onChange={v => update(['delegation', 'api_key'], v || undefined)}
+              placeholder="local-key"
+            />
+          </div>
+        </Card>
+
       {/* Memory Backend */}
       <Card className="p-6">
         <SectionTitle icon={<DatabaseZap size={16} />} title="Memory Backend" />
@@ -840,11 +887,12 @@ function formatCommandOutput(payload: Record<string, unknown>): string {
   return chunks.join('\n\n');
 }
 
-function Field({ label, value, onChange, type = 'text' }: {
+function Field({ label, value, onChange, type = 'text', placeholder }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   type?: string;
+  placeholder?: string;
 }) {
   return (
     <div className="mb-4">
@@ -854,7 +902,7 @@ function Field({ label, value, onChange, type = 'text' }: {
         value={value}
         onChange={e => onChange(e.target.value)}
         title={label}
-        placeholder={label}
+        placeholder={placeholder || label}
         className="w-full rounded-lg border border-border bg-muted px-4 py-2.5 font-mono text-sm transition-all focus:outline-none focus:ring-2 focus:ring-primary/40"
       />
     </div>

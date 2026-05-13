@@ -3,16 +3,17 @@ import { useLocation } from 'react-router-dom';
 import {
   House, MessageSquare, Database, Clock3, Puzzle,
   ShieldCheck, Settings, Sparkles,
-  FileStack, Webhook, GitBranchPlus, Globe, BookOpen,
+  FileStack, Webhook, Globe, BookOpen, Kanban, GitBranchPlus,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 export type NavItem =
   | 'home' | 'chat' | 'sessions'
-  | 'soul' | 'skills' | 'profiles'
-  | 'config' | 'contextFiles'
-  | 'automations' | 'extensions' | 'delegation'
-  | 'platforms' | 'docs';
+  | 'workspaces' | 'templates' | 'kanban'
+  | 'identity' | 'config' | 'skills' | 'profiles'
+  | 'automations' | 'extensions'
+  | 'platforms' | 'docs'
+  | 'contextFiles';
 
 export type NavSection = {
   label: string;
@@ -27,45 +28,58 @@ export type NavEntry = {
   path: string;
 };
 
-// ── Single source of truth ──────────────────────────────────────
+// ── Advanced items (referenced in navSections) ─────────────
+const advancedItems: NavEntry[] = [
+  { id: 'contextFiles', icon: FileStack, label: 'Context Files', title: 'Context Files', path: '/context-files' },
+  { id: 'extensions', icon: Webhook, label: 'Extensions', title: 'Extensions', path: '/extensions' },
+];
+
+// ── Single source of truth — 7 sections ─────────────────────────
+// COUCHE 1: IDENTITE (Agent)    → "Qui suis-je ?"
+// COUCHE 2: COMPOSITION (Workspaces) → "Qui travaille et comment ?"
+// COUCHE 3: ENVIRONNEMENT (Home, Chat, Profiles, System) → "Où et avec quoi ?"
 
 export const navSections: NavSection[] = [
   {
     label: 'Core',
     items: [
-      { id: 'home',          icon: House,           label: 'Home',           title: 'Home',           path: '/' },
       { id: 'chat',          icon: MessageSquare,   label: 'Chat',           title: 'Chat',           path: '/chat' },
-      { id: 'sessions',      icon: Database,        label: 'Sessions',       title: 'Sessions',       path: '/sessions' },
+      { id: 'home',          icon: House,           label: 'Home',           title: 'Home',           path: '/home' },
     ],
   },
   {
-    label: 'Agent',
+    label: 'Workspaces',
     items: [
-      { id: 'soul',          icon: Sparkles,        label: 'Agent Studio',   title: 'Agent Studio',   path: '/identity' },
-      { id: 'skills',        icon: Puzzle,          label: 'Skills',         title: 'Skills',         path: '/skills' },
+      { id: 'templates',     icon: FileStack,       label: 'Templates',      title: 'Templates',      path: '/templates' },
+      { id: 'workspaces',    icon: GitBranchPlus,   label: 'Workspaces',     title: 'Workspaces',     path: '/workspaces' },
+      { id: 'kanban',        icon: Kanban,          label: 'Kanban',         title: 'Kanban',         path: '/kanban' },
+    ],
+  },
+  {
+    label: 'Identity',
+    items: [
+      { id: 'identity',      icon: Sparkles,        label: 'Identity',       title: 'Identity',       path: '/identity' },
+      { id: 'config',        icon: Settings,        label: 'Config',         title: 'Config',         path: '/config' },
+    ],
+  },
+  {
+    label: 'Profiles',
+    items: [
       { id: 'profiles',      icon: ShieldCheck,     label: 'Profiles',       title: 'Profiles',       path: '/profiles' },
     ],
   },
   {
-    label: 'Infrastructure',
+    label: 'System',
     items: [
-      { id: 'config',        icon: Settings,        label: 'Runtime',        title: 'Runtime',        path: '/config' },
-      { id: 'contextFiles',  icon: FileStack,       label: 'Context Files',  title: 'Context Files',  path: '/context-files' },
-    ],
-  },
-  {
-    label: 'Automation',
-    items: [
+      { id: 'sessions',      icon: Database,        label: 'Sessions',       title: 'Sessions',       path: '/sessions' },
+      { id: 'skills',        icon: Puzzle,          label: 'Skills',         title: 'Skills',         path: '/skills' },
       { id: 'automations',   icon: Clock3,          label: 'Automations',    title: 'Automations',    path: '/automations' },
-      { id: 'extensions',    icon: Webhook,         label: 'Extensions',     title: 'Extensions',     path: '/extensions' },
-      { id: 'delegation',    icon: GitBranchPlus,   label: 'Delegation',     title: 'Delegation',     path: '/delegation' },
-    ],
-  },
-  {
-    label: 'External',
-    items: [
       { id: 'platforms',     icon: Globe,           label: 'Platforms',      title: 'Platforms',      path: '/platforms' },
     ],
+  },
+  {
+    label: 'Advanced',
+    items: advancedItems,
   },
 ];
 
@@ -75,7 +89,7 @@ const footerItems: NavEntry[] = [
 
 // ── Derived lookups ─────────────────────────────────────────────
 
-const allItems = [...navSections.flatMap(s => s.items), ...footerItems];
+const allItems = [...navSections.flatMap(s => s.items), ...footerItems, ...advancedItems];
 
 export const navPathMap: Record<NavItem, string> = Object.fromEntries(
   allItems.map(item => [item.id, item.path]),
@@ -89,13 +103,13 @@ const navToEntry = new Map<NavItem, NavEntry>(
   allItems.map(item => [item.id, item]),
 );
 
-// ── Hook ────────────────────────────────────────────────────────
+// ── Hook ─────────────────────────────────────────────────────────
 
 export function useNavigation() {
   const location = useLocation();
 
   const activeNav = useMemo<NavItem>(() => {
-    return pathToNav.get(location.pathname) || 'home';
+    return pathToNav.get(location.pathname) || 'chat';
   }, [location.pathname]);
 
   const activeEntry = navToEntry.get(activeNav)!;

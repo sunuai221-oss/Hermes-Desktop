@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import {
   getHermesHomeScore,
   resolveHermesHome,
+  resolveProfilePaths,
 } from '../services/profile-resolver.mjs';
 
 test('getHermesHomeScore favors multi-profile Hermes roots', async () => {
@@ -36,4 +37,15 @@ test('getHermesHomeScore favors multi-profile Hermes roots', async () => {
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }
+});
+
+test('agent studio storage is global across runtime profiles', () => {
+  const localStateHome = path.join(os.tmpdir(), 'hermes-local-state');
+  const defaultPaths = resolveProfilePaths('default', path.join(os.tmpdir(), 'hermes'), localStateHome);
+  const researchPaths = resolveProfilePaths('research', path.join(os.tmpdir(), 'hermes', 'profiles', 'research'), localStateHome);
+
+  assert.equal(researchPaths.agentStudioDir, defaultPaths.agentStudioDir);
+  assert.equal(researchPaths.agentStudioLibrary, defaultPaths.agentStudioLibrary);
+  assert.equal(researchPaths.agentStudioWorkspaces, defaultPaths.agentStudioWorkspaces);
+  assert.notEqual(researchPaths.agents, defaultPaths.agents);
 });

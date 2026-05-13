@@ -9,15 +9,14 @@ import { Card } from '../components/Card';
 import { PlatformIcon } from '../components/PlatformIcon';
 import { useFeedback } from '../contexts/FeedbackContext';
 import * as api from '../api';
-import { cn, formatRelativeTime, parsePlatformFromKey } from '../lib/utils';
-import type { NavItem, SessionEntry } from '../types';
+import { cn, formatRelativeTime, normalizeUnixTimestampSeconds, parsePlatformFromKey } from '../lib/utils';
+import type { SessionEntry } from '../types';
 
 interface Props {
-  onNavigate: (item: NavItem) => void;
   onOpenSessionInChat: (sessionId: string | null) => void;
 }
 
-export function SessionsPage({ onNavigate, onOpenSessionInChat }: Props) {
+export function SessionsPage({ onOpenSessionInChat }: Props) {
   const [sessions, setSessions] = useState<Record<string, SessionEntry> | null>(null);
   const [stats, setStats] = useState<{ total_sessions: number; total_messages: number; database_size_bytes: number } | null>(null);
   const [search, setSearch] = useState('');
@@ -135,7 +134,7 @@ export function SessionsPage({ onNavigate, onOpenSessionInChat }: Props) {
           const srcMatch = sourceFilter === 'all' || src === sourceFilter.toLowerCase();
           const textMatch = !search || title.includes(search.toLowerCase());
           return srcMatch && textMatch;
-        }).sort((a, b) => (b[1].last_accessed || 0) - (a[1].last_accessed || 0))
+        }).sort((a, b) => normalizeUnixTimestampSeconds(b[1].last_accessed) - normalizeUnixTimestampSeconds(a[1].last_accessed))
       : []
   ), [sessions, search, sourceFilter]);
 
@@ -193,7 +192,8 @@ export function SessionsPage({ onNavigate, onOpenSessionInChat }: Props) {
           <div className="divide-y divide-border/40">
             {entries.map(([id, sess]) => {
               const platform = parsePlatformFromKey(id);
-              const isRecent = (sess.last_accessed || 0) > Date.now() / 1000 - 86400;
+              const lastAccessed = normalizeUnixTimestampSeconds(sess.last_accessed);
+              const isRecent = lastAccessed > Date.now() / 1000 - 86400;
               const isRenaming = renamingId === id;
 
               return (
@@ -215,7 +215,7 @@ export function SessionsPage({ onNavigate, onOpenSessionInChat }: Props) {
                         <button onClick={() => setRenamingId(null)} className="text-muted-foreground"><X size={13} /></button>
                       </div>
                     ) : (
-                      <button onClick={() => { onOpenSessionInChat(id); onNavigate('chat'); }} className="text-left group/title">
+                      <button onClick={() => onOpenSessionInChat(id)} className="text-left group/title">
                         <p className="text-sm font-medium text-foreground truncate group-hover/title:text-primary transition-colors">{sess.title || id.split(':').slice(-2).join(':')}</p>
                       </button>
                     )}
@@ -228,7 +228,7 @@ export function SessionsPage({ onNavigate, onOpenSessionInChat }: Props) {
                   </div>
 
                   <span className="text-[11px] text-muted-foreground/50 flex-shrink-0 tabular-nums">
-                    {sess.last_accessed ? formatRelativeTime(sess.last_accessed) : '—'}
+                    {lastAccessed ? formatRelativeTime(lastAccessed) : '—'}
                   </span>
 
                   {/* Row actions */}
@@ -238,7 +238,7 @@ export function SessionsPage({ onNavigate, onOpenSessionInChat }: Props) {
                       openMenuId === id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
                     )}
                   >
-                    <button onClick={() => { onOpenSessionInChat(id); onNavigate('chat'); }} className="p-1.5 rounded text-muted-foreground hover:text-primary hover:bg-primary/5 transition-colors" title="Open">
+                    <button onClick={() => onOpenSessionInChat(id)} className="p-1.5 rounded text-muted-foreground hover:text-primary hover:bg-primary/5 transition-colors" title="Open">
                       <ArrowRight size={13} />
                     </button>
                     <div className="relative" ref={openMenuId === id ? menuRef : undefined}>
@@ -247,7 +247,7 @@ export function SessionsPage({ onNavigate, onOpenSessionInChat }: Props) {
                       </button>
                       {openMenuId === id && (
                         <div className="absolute right-0 top-full mt-1 w-40 bg-popover border border-border rounded-lg shadow-lg py-1 z-50">
-                          <MenuButton icon={<MessageSquare size={13} />} label="Open in Chat" onClick={() => { setOpenMenuId(null); onOpenSessionInChat(id); onNavigate('chat'); }} />
+                          <MenuButton icon={<MessageSquare size={13} />} label="Open in Chat" onClick={() => { setOpenMenuId(null); onOpenSessionInChat(id); }} />
                           <MenuButton icon={resumingId === id ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />} label="Resume" onClick={() => handleResume(id)} />
                           <MenuButton icon={<Pencil size={13} />} label="Rename" onClick={() => { setOpenMenuId(null); setRenamingId(id); setRenameValue(String(sess.title || '')); }} />
                           <div className="my-1 border-t border-border/40" />

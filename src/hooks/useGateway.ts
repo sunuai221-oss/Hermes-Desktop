@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import * as api from '../api';
+import { createRuntimeStatusSnapshot, normalizeGatewayProcessStatus } from '../features/runtime/runtimeStatus';
 import type {
   GatewayState,
   GatewayHook,
@@ -26,6 +27,7 @@ export function useGateway(interval = 4000): GatewayHook {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [hooks, setHooks] = useState<HookInfo[]>([]);
   const [isLoadingMeta, setIsLoadingMeta] = useState(true);
+  const [lastCheckedAt, setLastCheckedAt] = useState<string | null>(null);
 
   const probeDirectGateway = useCallback(async (baseUrl?: string) => {
     try {
@@ -41,6 +43,7 @@ export function useGateway(interval = 4000): GatewayHook {
   }, []);
 
   const poll = useCallback(async () => {
+    const checkedAt = new Date().toISOString();
     let nextProcessStatus: GatewayProcessStatus | null = null;
 
     try {
@@ -54,19 +57,13 @@ export function useGateway(interval = 4000): GatewayHook {
       setOllamaStatus('connecting');
       setModels([]);
       await probeDirectGateway();
+      setLastCheckedAt(checkedAt);
       return;
     }
 
     try {
       const res = await api.gateway.processStatus();
-      nextProcessStatus = {
-        ...res.data,
-        status: res.data.status === 'online'
-          ? 'online'
-          : res.data.pid
-            ? 'degraded'
-            : 'offline',
-      } as GatewayProcessStatus;
+      nextProcessStatus = normalizeGatewayProcessStatus(res.data) as GatewayProcessStatus;
       setProcessStatus(nextProcessStatus);
       if (nextProcessStatus.gateway_url) {
         setDirectGatewayUrl(nextProcessStatus.gateway_url);
@@ -102,7 +99,22 @@ export function useGateway(interval = 4000): GatewayHook {
       setOllamaStatus('offline');
       setModels([]);
     }
+    setLastCheckedAt(checkedAt);
   }, [probeDirectGateway]);
+
+  const refreshRuntime = useCallback(async () => {
+    await poll();
+  }, [poll]);
+
+  const startGateway = useCallback(async (profileName?: string, port?: number) => {
+    await api.gateway.start(port, profileName);
+    await poll();
+  }, [poll]);
+
+  const stopGateway = useCallback(async (profileName?: string) => {
+    await api.gateway.stop(profileName);
+    await poll();
+  }, [poll]);
 
   const pollMeta = useCallback(async () => {
     try {
@@ -134,8 +146,23 @@ export function useGateway(interval = 4000): GatewayHook {
     return () => clearInterval(timer);
   }, [pollMeta, interval]);
 
+  const runtimeSnapshot = useMemo(() => createRuntimeStatusSnapshot({
+    builderStatus,
+    gatewayHealth: health,
+    directGatewayHealth,
+    gatewayProcessStatus: processStatus,
+    lastCheckedAt,
+  }), [builderStatus, health, directGatewayHealth, processStatus, lastCheckedAt]);
+
   return {
     builderStatus,
+    runtimeStatus: runtimeSnapshot.runtimeStatus,
+    gatewayHealth: runtimeSnapshot.gatewayHealth,
+    gatewayProcessStatus: runtimeSnapshot.gatewayProcessStatus,
+    lastCheckedAt: runtimeSnapshot.lastCheckedAt,
+    refreshRuntime,
+    startGateway,
+    stopGateway,
     state,
     health,
     directGatewayHealth,

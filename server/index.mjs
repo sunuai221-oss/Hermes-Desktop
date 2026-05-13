@@ -36,19 +36,25 @@ import {
 
 // ── Routes ──────────────────────────────────────────────────────────
 import { registerApiAccessRoutes } from './routes/api-access.mjs';
-import { registerAgentRoutes } from './routes/agents.mjs';
+// ── deprecated: replaced by agent-studio (no frontend consumers) ──
+import { registerAgentStudioRoutes } from './routes/agent-studio.mjs';
 import { registerConfigRoutes } from './routes/config.mjs';
+import { registerContextFileRoutes } from './routes/context-files.mjs';
 import { registerContextReferenceRoutes } from './routes/context-references.mjs';
 import { registerCronJobRoutes } from './routes/cronjobs.mjs';
 import { registerGatewayRoutes } from './routes/gateway.mjs';
 import { registerHookRoutes } from './routes/hooks.mjs';
+import { registerIdentityRoutes } from './routes/identity.mjs';
+import { registerKanbanRoutes } from './routes/kanban.mjs';
+import { registerMediaRoutes } from './routes/media.mjs';
 import { registerModelRoutes } from './routes/models.mjs';
 import { registerPluginRoutes } from './routes/plugins.mjs';
+import { registerProfileRoutes } from './routes/profiles.mjs';
 import { registerSessionRoutes } from './routes/sessions.mjs';
 import { registerSkillRoutes } from './routes/skills.mjs';
 
 // ── Services (factories) ────────────────────────────────────────────
-import { createAgentsService } from './services/agents.mjs';
+import { createAgentStudioService } from './services/agent-studio.mjs';
 import { createContextReferenceService } from './services/context-references.mjs';
 import { createCronJobsService } from './services/cronjobs.mjs';
 import {
@@ -81,7 +87,6 @@ import {
 import { GatewayProcessManager } from './services/gateway-manager.mjs';
 import {
   resolveProfilePaths,
-  sanitizeProfileName,
   getHermesHome,
   resolveHermesHome,
   resolveLocalHermesStateHome,
@@ -89,6 +94,7 @@ import {
   getHermesHomeScore,
   detectWslHermesHome,
   resolveLocalAppStateDir,
+  sanitizeProfileName,
 } from './services/profile-resolver.mjs';
 import {
   parsePort,
@@ -124,7 +130,6 @@ import {
   synthesizeSpeechSegments,
   transcodeAudioWithFfmpeg,
   extractAssistantText,
-  ensureVoiceDir,
 } from './services/voice.mjs';
 
 // ── Constants ───────────────────────────────────────────────────────
@@ -166,7 +171,7 @@ const { fetchProviderModels } = createProviderCatalogService({
 });
 const runtimeFilesService = createRuntimeFilesService({ fs, yaml });
 const skillsService = createSkillsService({ fs, path, yaml });
-const agentsService = createAgentsService({ fs, runtimeFilesService });
+const agentStudioService = createAgentStudioService({ fs, path, yaml, runtimeFilesService });
 const contextReferenceService = createContextReferenceService({
   fs,
   path,
@@ -184,6 +189,11 @@ const pluginsService = createPluginsService({
   workspaceRoot: WORKSPACE_ROOT,
 });
 const cronJobsService = createCronJobsService({ fs, path });
+const getDesktopProviderRequestConfig = (hermes, body = {}) => getProviderRequestConfig(hermes, body, yaml, OLLAMA_BASE_URL);
+const postDesktopGatewayChatCompletion = (hermes, body, options = {}) => postGatewayChatCompletion(hermes, body, {
+  ...options,
+  getProviderRequestConfig: options.getProviderRequestConfig || getDesktopProviderRequestConfig,
+});
 
 // ── Express App Setup ───────────────────────────────────────────────
 const app = express();
@@ -314,106 +324,6 @@ async function hermesContextMiddleware(req, res, next) {
   }
 }
 
-// ── Profile Management Routes ───────────────────────────────────────
-
-app.get('/api/profiles/metadata', async (req, res) => {
-  try {
-    const profilesDir = path.join(HERMES_BASE, 'profiles');
-    const profileNames = ['default'];
-    const entries = await fs.readdir(profilesDir, { withFileTypes: true }).catch(() => []);
-    for (const entry of entries) {
-      if (entry.isDirectory()) profileNames.push(entry.name);
-    }
-
-    const results = [];
-    for (const name of profileNames) {
-      const context = await getHermesContext(name);
-      let config = {};
-      try {
-        const configData = await fs.readFile(context.paths.config, 'utf-8');
-        config = yaml.parse(configData);
-      } catch {}
-
-      const procStatus = await resolveGatewayProcessStatus(context, gatewayManager);
-
-      results.push({
-        name,
-        isDefault: name === 'default',
-        model: config?.model?.default || 'default',
-        port: procStatus.port || context.gatewayPort || (name === 'default' ? 8642 : null),
-        status: procStatus.status,
-        managed: procStatus.managed,
-        status_source: procStatus.status_source,
-        home: procStatus.home,
-      });
-    }
-    res.json(results);
-  } catch (error) {
-    res.status(500).json({ error: 'Could not fetch profiles metadata', details: error.message });
-  }
-});
-
-app.post('/api/profiles', async (req, res) => {
-  try {
-    const rawName = String(req.body?.name || '').trim();
-    const name = sanitizeProfileName(rawName);
-    if (!rawName || name === 'default' || rawName !== name) {
-      return res.status(400).json({ error: 'Invalid profile name' });
-    }
-    const profileHome = getHermesHome(HERMES_BASE, name);
-    if (await exists(profileHome)) {
-      return res.status(409).json({ error: 'Profile already exists' });
-    }
-    await fs.mkdir(profileHome, { recursive: true });
-
-    const paths = resolveProfilePaths(name, profileHome, LOCAL_HERMES_STATE_HOME);
-    const defaultSoulPath = path.join(HERMES_BASE, 'SOUL.md');
-    const defaultConfigPath = path.join(HERMES_BASE, 'config.yaml');
-    const defaultEnvPath = path.join(HERMES_BASE, '.env');
-    const defaultAuthPath = path.join(HERMES_BASE, 'auth.json');
-    const defaultSoul = await fs.readFile(defaultSoulPath, 'utf-8').catch(() => '# Hermes');
-    const defaultConfig = await fs.readFile(defaultConfigPath, 'utf-8').catch(() => '');
-
-    await fs.writeFile(paths.soul, defaultSoul, 'utf-8');
-    await fs.writeFile(paths.config, defaultConfig, 'utf-8');
-    await copyFileIfExists(defaultEnvPath, paths.env);
-    await copyFileIfExists(defaultAuthPath, path.join(profileHome, 'auth.json'));
-    await fs.mkdir(paths.memories, { recursive: true });
-    await fs.mkdir(paths.sessionsDir, { recursive: true });
-    await fs.mkdir(paths.skills, { recursive: true });
-    await fs.mkdir(paths.hooks, { recursive: true });
-    await fs.mkdir(paths.cron, { recursive: true });
-    await fs.mkdir(path.join(profileHome, 'logs'), { recursive: true });
-
-    res.json({ success: true, name });
-  } catch (error) {
-    res.status(500).json({ error: 'Could not create profile', details: error.message });
-  }
-});
-
-app.delete('/api/profiles/:name', async (req, res) => {
-  try {
-    const name = sanitizeProfileName(req.params.name);
-    if (name === 'default') {
-      return res.status(400).json({ error: 'Cannot delete default profile' });
-    }
-    const profileHome = getHermesHome(HERMES_BASE, name);
-    const stateDbPath = resolveProfilePaths(name, profileHome, LOCAL_HERMES_STATE_HOME).stateDb;
-    const appStateDir = resolveLocalAppStateDir(name, LOCAL_HERMES_STATE_HOME);
-    stateDbManager.closeStateDb(stateDbPath);
-
-    if (profileHome.startsWith(HERMES_BASE) && profileHome !== HERMES_BASE) {
-      await fs.rm(profileHome, { recursive: true, force: true });
-    }
-    if (appStateDir.startsWith(LOCAL_HERMES_STATE_HOME)) {
-      await fs.rm(appStateDir, { recursive: true, force: true }).catch(() => {});
-    }
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: 'Could not delete profile', details: error.message });
-  }
-});
-
 // ── Health Check ────────────────────────────────────────────────────
 
 async function sendDesktopHealth(_req, res) {
@@ -447,514 +357,63 @@ registerGatewayRoutes({
   axios,
   fs,
   gatewayManager,
-  getProviderRequestConfig,
+  getProviderRequestConfig: getDesktopProviderRequestConfig,
   insertMessages,
   makeSessionId,
   nowTs,
-  postGatewayChatCompletion,
+  postGatewayChatCompletion: postDesktopGatewayChatCompletion,
   requestGatewayHealth,
   resolveGatewayProcessStatus,
   upsertSession,
   waitForGatewayHealth,
 });
 
-// ── File Management Routes ──────────────────────────────────────────
-
-app.get('/api/soul', async (req, res) => {
-  try {
-    const data = await fs.readFile(req.hermes.paths.soul, 'utf-8');
-    res.json({ content: data });
-  } catch {
-    res.status(500).json({ error: 'Could not read SOUL.md' });
-  }
+registerKanbanRoutes({ app });
+registerIdentityRoutes({ app, fs, skillsService });
+registerContextFileRoutes({
+  app,
+  fs,
+  path,
+  workspaceRoot: WORKSPACE_ROOT,
 });
-
-app.post('/api/soul', async (req, res) => {
-  try {
-    await fs.writeFile(req.hermes.paths.soul, req.body.content, 'utf-8');
-    res.json({ success: true });
-  } catch {
-    res.status(500).json({ error: 'Could not write SOUL.md' });
-  }
+registerMediaRoutes({
+  app,
+  fs,
+  path,
+  runtimeFilesService,
+  voiceScriptPath: VOICE_SCRIPT_PATH,
+  extractAssistantText,
+  getVoiceConfig,
+  parseAudioDataUrl,
+  postGatewayChatCompletion: postDesktopGatewayChatCompletion,
+  sanitizeTextForSpeech,
+  synthesizeSpeech,
+  synthesizeSpeechSegments,
+  transcribeAudioFile,
 });
-
-app.post('/api/images', async (req, res) => {
-  try {
-    const rawFileName = String(req.body?.fileName || 'clipboard');
-    const fileName = rawFileName.replace(/[^\w.-]+/g, '_').replace(/\.png$/i, '') || 'clipboard';
-    const dataUrl = String(req.body?.dataUrl || '');
-    const match = dataUrl.match(/^data:image\/png;base64,(.+)$/);
-
-    if (!match) {
-      return res.status(400).json({ error: 'Only PNG data URLs are supported' });
-    }
-
-    const buffer = Buffer.from(match[1], 'base64');
-    if (buffer.length === 0 || buffer.length > 10 * 1024 * 1024) {
-      return res.status(400).json({ error: 'Image must be between 1 byte and 10 MB' });
-    }
-
-    await ensureImagesDir(req.hermes);
-    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const targetPath = path.join(req.hermes.paths.images, `${id}_${fileName}.png`);
-    await fs.writeFile(targetPath, buffer);
-
-    res.json({
-      id,
-      fileName: `${fileName}.png`,
-      mimeType: 'image/png',
-      dataUrl,
-      path: targetPath,
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Could not save image attachment', details: error.message });
-  }
-});
-
-// ── Voice Routes ────────────────────────────────────────────────────
-
-app.post('/api/voice/respond', async (req, res) => {
-  let inputPath = null;
-
-  try {
-    const dataUrl = String(req.body?.audioDataUrl || '');
-    if (!dataUrl) {
-      return res.status(400).json({ error: 'audioDataUrl is required' });
-    }
-
-    await ensureVoiceDir(req.hermes);
-    const { buffer, extension } = parseAudioDataUrl(dataUrl);
-    const voiceConfig = await getVoiceConfig(req.hermes, runtimeFilesService);
-    const voiceId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    inputPath = path.join(req.hermes.paths.voice, `${voiceId}_input.${extension}`);
-    await fs.writeFile(inputPath, buffer);
-
-    const transcript = await transcribeAudioFile(req.hermes, inputPath, voiceConfig.sttModel);
-    if (!transcript.trim()) {
-      return res.status(400).json({ error: 'No speech detected. Try speaking more clearly or recording a little longer.' });
-    }
-
-    const contextText = String(req.body?.contextText || '').trim();
-    const images = Array.isArray(req.body?.images) ? req.body.images.filter(item => typeof item?.dataUrl === 'string') : [];
-    const userContent = contextText ? `${transcript}\n\n${contextText}` : transcript;
-    const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
-    const completion = await postGatewayChatCompletion(req.hermes, {
-      model: String(req.body?.model || voiceConfig.model),
-      think: req.body?.think ?? voiceConfig.think,
-      messages: [
-        ...messages,
-        {
-          role: 'user',
-          content: images.length > 0
-            ? [
-              { type: 'text', text: userContent },
-              ...images.map(image => ({ type: 'image_url', image_url: { url: image.dataUrl } })),
-            ]
-            : userContent,
-        },
-      ],
-    });
-
-    const assistantText = extractAssistantText(completion);
-    if (!assistantText) {
-      return res.status(502).json({ error: 'Voice response was empty' });
-    }
-
-    const synthesized = await synthesizeSpeech(req.hermes, assistantText, voiceConfig);
-    res.json({
-      transcript,
-      assistantText,
-      ...synthesized,
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Could not process voice request', details: error.message });
-  } finally {
-    if (inputPath) {
-      fs.unlink(inputPath).catch(() => {});
-    }
-  }
-});
-
-app.post('/api/voice/synthesize', async (req, res) => {
-  try {
-    const text = sanitizeTextForSpeech(String(req.body?.text || ''));
-    if (!text) {
-      return res.status(400).json({ error: 'text is required' });
-    }
-
-    const voiceConfig = await getVoiceConfig(req.hermes, runtimeFilesService);
-    const synthesized = await synthesizeSpeech(req.hermes, text, voiceConfig);
-    res.json(synthesized);
-  } catch (error) {
-    res.status(500).json({ error: 'Could not synthesize voice reply', details: error.message });
-  }
-});
-
-// ── Context Files Routes ────────────────────────────────────────────
-
-// Delete generated TTS files once playback is complete on the client.
-app.post('/api/voice/synthesize/stream', async (req, res) => {
-  const text = sanitizeTextForSpeech(String(req.body?.text || ''));
-  if (!text) {
-    return res.status(400).json({ error: 'text is required' });
-  }
-
-  const sendEvent = (event, payload) => {
-    res.write(`event: ${event}\n`);
-    res.write(`data: ${JSON.stringify(payload)}\n\n`);
-  };
-
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders?.();
-
-  try {
-    const voiceConfig = await getVoiceConfig(req.hermes, runtimeFilesService);
-    let count = 0;
-    for await (const synthesized of synthesizeSpeechSegments(req.hermes, text, voiceConfig)) {
-      count += 1;
-      sendEvent('voice.audio', synthesized);
-    }
-    sendEvent('done', { ok: true, count });
-  } catch (error) {
-    sendEvent('error', { error: 'Could not synthesize voice reply', details: error.message });
-  } finally {
-    res.end();
-  }
-});
-
-app.delete('/api/voice/audio/:fileName', async (req, res) => {
-  try {
-    const requestedFileName = String(req.params?.fileName || '').trim();
-    const fileName = path.basename(requestedFileName);
-    if (!fileName || fileName !== requestedFileName) {
-      return res.status(400).json({ error: 'Invalid audio file name' });
-    }
-
-    const voiceDir = path.resolve(req.hermes.paths.voice);
-    const targetPath = path.resolve(voiceDir, fileName);
-    const relativePath = path.relative(voiceDir, targetPath);
-    if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
-      return res.status(400).json({ error: 'Invalid audio file path' });
-    }
-
-    await fs.unlink(targetPath).catch((error) => {
-      if (error?.code === 'ENOENT') return;
-      throw error;
-    });
-    res.status(204).end();
-  } catch (error) {
-    res.status(500).json({ error: 'Could not delete voice audio', details: error.message });
-  }
-});
-
-const STARTUP_CONTEXT_FILES = ['.hermes.md', 'HERMES.md', 'AGENTS.md', 'CLAUDE.md', '.cursorrules'];
-const NESTED_CONTEXT_FILES = ['AGENTS.md', 'CLAUDE.md', '.cursorrules'];
-const MAX_CONTEXT_PREVIEW = 8000;
-const CONTEXT_SCAN_MAX_DEPTH = Math.max(1, Number(process.env.HERMES_CONTEXT_SCAN_MAX_DEPTH || 5));
-const CONTEXT_FILES_CACHE_TTL_MS = Math.max(0, Number(process.env.HERMES_CONTEXT_FILES_CACHE_TTL_MS || 30000));
-const CONTEXT_SCAN_EXCLUDED_DIRS = new Set([
-  '.cache',
-  '.git',
-  '.next',
-  '.pnpm-store',
-  '.turbo',
-  '.venv',
-  '__pycache__',
-  'build',
-  'dist',
-  'node_modules',
-  'release',
-  'site-packages',
-  'venv',
-]);
-const contextFilesCache = new Map();
-
-function getContextFilesCacheKey(hermes) {
-  return `${hermes?.profile || 'default'}:${WORKSPACE_ROOT}`;
-}
-
-function readContextFilesCache(cacheKey) {
-  if (CONTEXT_FILES_CACHE_TTL_MS <= 0) return null;
-  const cached = contextFilesCache.get(cacheKey);
-  if (!cached) return null;
-  if (Date.now() > cached.expiresAt) {
-    contextFilesCache.delete(cacheKey);
-    return null;
-  }
-  return cached.value;
-}
-
-function writeContextFilesCache(cacheKey, value) {
-  if (CONTEXT_FILES_CACHE_TTL_MS <= 0) return;
-  contextFilesCache.set(cacheKey, {
-    value,
-    expiresAt: Date.now() + CONTEXT_FILES_CACHE_TTL_MS,
-  });
-}
-
-function clearContextFilesCache(cacheKey) {
-  if (cacheKey) {
-    contextFilesCache.delete(cacheKey);
-    return;
-  }
-  contextFilesCache.clear();
-}
-
-async function scanContextFile(filePath, kind, extra = {}) {
-  try {
-    const content = await fs.readFile(filePath, 'utf-8');
-    const truncated = content.length > MAX_CONTEXT_PREVIEW;
-    return {
-      path: filePath,
-      kind,
-      name: path.basename(filePath),
-      content: truncated
-        ? `${content.slice(0, 5600)}\n\n[...preview truncated...]\n\n${content.slice(-1600)}`
-        : content,
-      charCount: content.length,
-      truncated,
-      ...extra,
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function listContextFiles(hermes, options = {}) {
-  const force = options?.force === true;
-  const cacheKey = getContextFilesCacheKey(hermes);
-  if (!force) {
-    const cached = readContextFilesCache(cacheKey);
-    if (cached) return cached;
-  }
-
-  const startupCandidates = [];
-  let startupWinner = null;
-
-  for (let i = 0; i < STARTUP_CONTEXT_FILES.length; i++) {
-    const name = STARTUP_CONTEXT_FILES[i];
-    const candidate = await scanContextFile(
-      path.join(WORKSPACE_ROOT, name),
-      'startup',
-      { priority: i + 1 }
-    );
-    if (candidate) {
-      if (!startupWinner) {
-        startupWinner = candidate.path;
-        candidate.selectedAtStartup = true;
-      } else {
-        candidate.selectedAtStartup = false;
-      }
-      startupCandidates.push(candidate);
-    }
-  }
-
-  const soul = await scanContextFile(hermes.paths.soul, 'soul');
-  const nestedCandidates = [];
-  const cursorModules = [];
-
-  async function walk(dir, depth = 0) {
-    if (depth > CONTEXT_SCAN_MAX_DEPTH) return;
-    const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
-    for (const entry of entries) {
-      const entryName = String(entry.name || '');
-      const lowerName = entryName.toLowerCase();
-      if (entry.isDirectory() && CONTEXT_SCAN_EXCLUDED_DIRS.has(lowerName)) continue;
-      const fullPath = path.join(dir, entry.name);
-
-      if (entry.isDirectory()) {
-        if (entryName === '.cursor') {
-          const rulesDir = path.join(fullPath, 'rules');
-          const rulesEntries = await fs.readdir(rulesDir, { withFileTypes: true }).catch(() => []);
-          for (const rule of rulesEntries) {
-            if (!rule.isFile() || !rule.name.endsWith('.mdc')) continue;
-            const file = await scanContextFile(path.join(rulesDir, rule.name), 'cursor-module');
-            if (file) cursorModules.push(file);
-          }
-        }
-        await walk(fullPath, depth + 1);
-        continue;
-      }
-
-      if (!entry.isFile()) continue;
-      if (!NESTED_CONTEXT_FILES.includes(entry.name)) continue;
-      if (dir === WORKSPACE_ROOT && STARTUP_CONTEXT_FILES.includes(entry.name)) continue;
-
-      const file = await scanContextFile(fullPath, 'nested', { discoveredProgressively: true });
-      if (file) nestedCandidates.push(file);
-    }
-  }
-
-  await walk(WORKSPACE_ROOT);
-
-  const inventory = {
-    workspaceRoot: WORKSPACE_ROOT,
-    startupWinner,
-    startupCandidates,
-    nestedCandidates,
-    cursorModules,
-    soul,
-  };
-  writeContextFilesCache(cacheKey, inventory);
-  return inventory;
-}
-
-app.get('/api/context-files', async (req, res) => {
-  try {
-    const force = String(req.query?.refresh || '') === '1';
-    res.json(await listContextFiles(req.hermes, { force }));
-  } catch (error) {
-    res.status(500).json({ error: 'Could not scan context files', details: error.message });
-  }
-});
-
-app.post('/api/context-files', async (req, res) => {
-  try {
-    const targetPath = String(req.body?.path || '');
-    const content = typeof req.body?.content === 'string' ? req.body.content : '';
-    const inventory = await listContextFiles(req.hermes, { force: true });
-    const allowed = new Set([
-      ...inventory.startupCandidates.map(item => item.path),
-      ...inventory.nestedCandidates.map(item => item.path),
-      ...inventory.cursorModules.map(item => item.path),
-      inventory.soul?.path,
-    ].filter(Boolean));
-
-    if (!allowed.has(targetPath)) {
-      return res.status(400).json({ error: 'Path is not a discovered editable context file' });
-    }
-
-    await fs.writeFile(targetPath, content, 'utf-8');
-    clearContextFilesCache(getContextFilesCacheKey(req.hermes));
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: 'Could not write context file', details: error.message });
-  }
-});
-
-// ── Memory Routes ───────────────────────────────────────────────────
-
-async function getMemoryStores(hermes) {
-  const config = await skillsService.readConfigForSkills(hermes);
-  await ensureMemoriesDir(hermes);
-
-  const [memoryContent, userContent] = await Promise.all([
-    fs.readFile(hermes.paths.memory, 'utf-8').catch(() => ''),
-    fs.readFile(hermes.paths.userMemory, 'utf-8').catch(() => ''),
-  ]);
-
-  const memoryLimit = config?.memory?.memory_char_limit ?? 2200;
-  const userLimit = config?.memory?.user_char_limit ?? 1375;
-
-  return [
-    {
-      target: 'memory',
-      path: hermes.paths.memory,
-      content: memoryContent,
-      charLimit: memoryLimit,
-      charCount: memoryContent.length,
-      usagePercent: Math.min(100, Math.round((memoryContent.length / memoryLimit) * 100) || 0),
-    },
-    {
-      target: 'user',
-      path: hermes.paths.userMemory,
-      content: userContent,
-      charLimit: userLimit,
-      charCount: userContent.length,
-      usagePercent: Math.min(100, Math.round((userContent.length / userLimit) * 100) || 0),
-    },
-  ];
-}
-
-app.get('/api/memory', async (req, res) => {
-  try {
-    res.json(await getMemoryStores(req.hermes));
-  } catch (error) {
-    res.status(500).json({ error: 'Could not read memory stores', details: error.message });
-  }
-});
-
-app.post('/api/memory', async (req, res) => {
-  try {
-    const target = req.body?.target === 'user' ? 'user' : 'memory';
-    const content = typeof req.body?.content === 'string' ? req.body.content : '';
-    const stores = await getMemoryStores(req.hermes);
-    const store = stores.find(item => item.target === target);
-
-    if (!store) {
-      return res.status(400).json({ error: 'Unknown memory target' });
-    }
-
-    if (content.length > store.charLimit) {
-      return res.status(400).json({
-        error: `Memory at ${content.length}/${store.charLimit} chars. Trim content before saving.`,
-      });
-    }
-
-    await ensureMemoriesDir(req.hermes);
-    await fs.writeFile(
-      target === 'user' ? req.hermes.paths.userMemory : req.hermes.paths.memory,
-      content,
-      'utf-8'
-    );
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: 'Could not write memory store', details: error.message });
-  }
-});
-
-app.get('/api/memory/search', async (req, res) => {
-  try {
-    const query = String(req.query?.q || '').trim();
-    if (!query) return res.json([]);
-    const db = req.hermes.db;
-    const ftsQuery = query
-      .replace(/[^\p{L}\p{N}\s_*"'-]/gu, ' ')
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean)
-      .map(token => (token.includes('"') || token.includes('*')) ? token : `${token}*`)
-      .join(' ');
-    const rows = db.prepare(`
-      SELECT
-        m.session_id AS sessionId,
-        s.source AS platform,
-        m.role AS role,
-        m.content AS content,
-        m.timestamp AS timestamp
-      FROM messages_fts f
-      JOIN messages m ON m.id = f.rowid
-      JOIN sessions s ON s.id = m.session_id
-      WHERE f.content MATCH ?
-      ORDER BY rank
-      LIMIT 25
-    `).all(ftsQuery || query);
-    const lowered = query.toLowerCase();
-    const results = rows.map(row => {
-      const content = String(row.content || '');
-      const index = Math.max(0, content.toLowerCase().indexOf(lowered));
-      return {
-        sessionId: row.sessionId,
-        platform: row.platform || 'unknown',
-        role: row.role || 'unknown',
-        snippet: content.slice(Math.max(0, index - 80), index + lowered.length + 160),
-        timestamp: row.timestamp,
-      };
-    });
-    res.json(results);
-  } catch (error) {
-    res.status(500).json({ error: 'Could not search session history', details: error.message });
-  }
+registerProfileRoutes({
+  app,
+  fs,
+  path,
+  yaml,
+  gatewayManager,
+  getHermesContext,
+  hermesBase: HERMES_BASE,
+  localHermesStateHome: LOCAL_HERMES_STATE_HOME,
+  getHermesHome,
+  resolveGatewayProcessStatus,
+  resolveLocalAppStateDir,
+  resolveProfilePaths,
+  sanitizeProfileName,
+  stateDbManager,
 });
 
 // ── Route Registration (remaining) ──────────────────────────────────
 
-registerAgentRoutes({ app, agentsService });
-registerConfigRoutes({ app, runtimeFilesService });
-registerContextReferenceRoutes({ app, contextReferenceService });
-registerSessionRoutes({
+  registerAgentStudioRoutes({ app, agentStudioService, getHermesContext, postGatewayChatCompletion: postDesktopGatewayChatCompletion });
+  registerConfigRoutes({ app, runtimeFilesService });
+  registerContextReferenceRoutes({ app, contextReferenceService });
+  registerSessionRoutes({
   app,
   fs,
   path,
@@ -1104,29 +563,6 @@ export async function stopServer() {
 export { app, isAllowedOrigin, isLocalRequest };
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
-async function exists(targetPath) {
-  try {
-    await fs.access(targetPath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function copyFileIfExists(sourcePath, targetPath) {
-  if (!(await exists(sourcePath))) return false;
-  await fs.copyFile(sourcePath, targetPath);
-  return true;
-}
-
-async function ensureMemoriesDir(hermes) {
-  await fs.mkdir(hermes.paths.memories, { recursive: true });
-}
-
-async function ensureImagesDir(hermes) {
-  await fs.mkdir(hermes.paths.images, { recursive: true });
-}
 
 // ── Direct Execution ────────────────────────────────────────────────
 

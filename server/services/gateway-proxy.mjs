@@ -98,7 +98,7 @@ function normalizeChatProvider(providerName) {
  */
 function readModelConfigSync(hermes, yaml) {
   try {
-    const raw = require('fs').readFileSync(hermes.paths.config, 'utf-8');
+    const raw = fs.readFileSync(hermes.paths.config, 'utf-8');
     const parsed = yaml.parse(raw) || {};
     return parsed?.model || {};
   } catch {
@@ -109,13 +109,14 @@ function readModelConfigSync(hermes, yaml) {
 /**
  * Build the gateway provider payload for a chat request.
  */
-function buildGatewayProviderPayload(hermes, body = {}, yaml, ollamaBaseUrl) {
+function buildGatewayProviderPayload(hermes, body = {}, yaml = null, ollamaBaseUrl = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434') {
   const provider = normalizeChatProvider(body.provider);
+  const normalizedOllamaBaseUrl = String(ollamaBaseUrl || 'http://127.0.0.1:11434').replace(/\/$/, '');
   if (provider === 'ollama') {
     return {
       ...body,
       provider: 'custom',
-      base_url: `${ollamaBaseUrl}/v1`,
+      base_url: `${normalizedOllamaBaseUrl}/v1`,
       api_key: 'ollama',
     };
   }
@@ -139,7 +140,7 @@ function buildGatewayProviderPayload(hermes, body = {}, yaml, ollamaBaseUrl) {
 /**
  * Get the request config for a gateway provider call.
  */
-function getProviderRequestConfig(hermes, body = {}, yaml, ollamaBaseUrl) {
+function getProviderRequestConfig(hermes, body = {}, yaml = null, ollamaBaseUrl = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434') {
   const payload = buildGatewayProviderPayload(hermes, body, yaml, ollamaBaseUrl);
   return {
     provider: payload.provider,

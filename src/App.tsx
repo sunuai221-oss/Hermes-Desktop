@@ -1,4 +1,4 @@
-import { Suspense, lazy, useState } from 'react';
+import { Suspense, lazy, useCallback, useState } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { Sidebar } from './components/Sidebar';
@@ -10,20 +10,24 @@ import { FeedbackProvider } from './contexts/FeedbackProvider';
 import { GatewayProvider } from './contexts/GatewayProvider';
 import { useProfiles } from './contexts/ProfileContext';
 import { ProfileProvider } from './contexts/ProfileProvider';
+import { useChatSessionOpener } from './features/chat/openChatSession';
 import type { NavItem } from './hooks/useNavigation';
 
 const HomePage = lazy(() => import('./pages/HomePage').then(module => ({ default: module.HomePage })));
 const PlatformsPage = lazy(() => import('./pages/PlatformsPage').then(module => ({ default: module.PlatformsPage })));
-const SoulPage = lazy(() => import('./pages/SoulPage').then(module => ({ default: module.SoulPage })));
+const IdentityPage = lazy(() => import('./pages/IdentityPage').then(module => ({ default: module.IdentityPage })));
+const TemplatesPage = lazy(() => import('./pages/TemplatesPage').then(module => ({ default: module.TemplatesPage })));
+const WorkspacesPage = lazy(() => import('./pages/WorkspacesPage').then(module => ({ default: module.WorkspacesPage })));
 const ContextFilesPage = lazy(() => import('./pages/ContextFilesPage').then(module => ({ default: module.ContextFilesPage })));
 const ExtensionsPage = lazy(() => import('./pages/ExtensionsPage').then(module => ({ default: module.ExtensionsPage })));
 const AutomationsPage = lazy(() => import('./pages/AutomationsPage').then(module => ({ default: module.AutomationsPage })));
-const DelegationPage = lazy(() => import('./pages/DelegationPage').then(module => ({ default: module.DelegationPage })));
+const KanbanPage = lazy(() => import('./pages/KanbanPage').then(module => ({ default: module.KanbanPage })));
 const ConfigPage = lazy(() => import('./pages/ConfigPage').then(module => ({ default: module.ConfigPage })));
 const SessionsPage = lazy(() => import('./pages/SessionsPage').then(module => ({ default: module.SessionsPage })));
 const ChatPage = lazy(() => import('./pages/ChatPage').then(module => ({ default: module.ChatPage })));
 const SkillsPage = lazy(() => import('./pages/SkillsPage').then(module => ({ default: module.SkillsPage })));
 const ProfilesPage = lazy(() => import('./pages/ProfilesPage').then(module => ({ default: module.ProfilesPage })));
+const DocsPage = lazy(() => import('./pages/DocsPage').then(module => ({ default: module.DocsPage })));
 
 export default function App() {
   return (
@@ -43,32 +47,28 @@ function AppShell() {
     if (typeof window === 'undefined') return true;
     return window.innerWidth >= 1024; // lg breakpoint
   });
-  const [chatSessionRequest, setChatSessionRequest] = useState<{ sessionId: string | null; nonce: number }>({ sessionId: null, nonce: 0 });
   const gateway = useGatewayContext();
   const navigate = useNavigate();
   const location = useLocation();
   const { activeNav, navPathMap } = useNavigation();
   const { status: runtimeStatus } = useRuntimeStatus(gateway);
 
-  const closeSidebarOnMobile = () => {
+  const closeSidebarOnMobile = useCallback(() => {
     if (typeof window !== 'undefined' && window.innerWidth < 1024) {
       setSidebarOpen(false);
     }
-  };
+  }, []);
+
+  const { chatSessionRequest, openChatSession } = useChatSessionOpener({
+    navigate,
+    chatPath: navPathMap.chat,
+    onBeforeOpen: closeSidebarOnMobile,
+  });
 
   const handleNavigate = (tab: NavItem) => {
-    if (tab === 'docs') {
-      window.open('https://hermes-agent.nousresearch.com/docs/', '_blank');
-      return;
-    }
+   // docs handled via react-router
     closeSidebarOnMobile();
     navigate(navPathMap[tab]);
-  };
-
-  const handleOpenSessionInChat = (sessionId: string | null = null) => {
-    setChatSessionRequest({ sessionId, nonce: Date.now() });
-    closeSidebarOnMobile();
-    navigate(navPathMap.chat);
   };
 
   return (
@@ -89,24 +89,49 @@ function AppShell() {
             <AnimatePresence mode="wait">
               <div key={`${currentProfile}:${location.pathname}`} className="h-full">
                 <Routes>
-                  <Route path="/" element={<HomePage onNavigate={handleNavigate} onOpenSessionInChat={handleOpenSessionInChat} />} />
+                  {/* ── Default → Chat ── */}
+                  <Route path="/" element={<Navigate to="/chat" replace />} />
+
+                  {/* ── Home ── */}
+                  <Route path="/home" element={<HomePage onNavigate={handleNavigate} onOpenSessionInChat={openChatSession} />} />
+
+                  {/* ── Chat ── */}
                   <Route path="/chat" element={<ChatPage requestedSessionId={chatSessionRequest.sessionId} requestNonce={chatSessionRequest.nonce} />} />
-                  <Route path="/sessions" element={<SessionsPage onNavigate={handleNavigate} onOpenSessionInChat={handleOpenSessionInChat} />} />
-                  <Route path="/automations" element={<AutomationsPage />} />
-                  <Route path="/memory" element={<Navigate to="/identity" replace />} />
-                  <Route path="/skills" element={<SkillsPage />} />
-                  <Route path="/profiles" element={<ProfilesPage onNavigate={handleNavigate} />} />
-                  <Route path="/gateway" element={<Navigate to="/config" replace />} />
+
+                  {/* ── Workspaces (Templates, Workspaces, Kanban) ── */}
+                  <Route path="/templates" element={<TemplatesPage />} />
+                  <Route path="/workspaces" element={<WorkspacesPage />} />
+                  <Route path="/kanban" element={<KanbanPage />} />
+                  <Route path="/agent-studio" element={<Navigate to="/workspaces" replace />} />
+
+                  {/* ── Agent (Identity, Config) ── */}
+                  <Route path="/identity" element={<IdentityPage />} />
                   <Route path="/config" element={<ConfigPage />} />
-                  <Route path="/identity" element={<SoulPage />} />
+                  <Route path="/agent" element={<Navigate to="/identity" replace />} />
+                  <Route path="/memory" element={<Navigate to="/identity" replace />} />
+                  <Route path="/gateway" element={<Navigate to="/config" replace />} />
                   <Route path="/providers" element={<Navigate to="/config" replace />} />
+
+                  {/* ── Profiles ── */}
+                  <Route path="/profiles" element={<ProfilesPage onNavigate={handleNavigate} />} />
+
+                  {/* ── System (Sessions, Skills, Automations, Platforms) ── */}
+                  <Route path="/sessions" element={<SessionsPage onOpenSessionInChat={openChatSession} />} />
+                  <Route path="/skills" element={<SkillsPage />} />
+                  <Route path="/automations" element={<AutomationsPage />} />
+                  <Route path="/platforms" element={<PlatformsPage />} />
+
+                  {/* ── Hidden / Expert ── */}
                   <Route path="/context-files" element={<ContextFilesPage />} />
                   <Route path="/extensions" element={<ExtensionsPage />} />
                   <Route path="/plugins" element={<Navigate to="/extensions" replace />} />
                   <Route path="/hooks" element={<Navigate to="/extensions" replace />} />
-                  <Route path="/delegation" element={<DelegationPage />} />
-                  <Route path="/platforms" element={<PlatformsPage />} />
-                  <Route path="*" element={<Navigate to="/" replace />} />
+
+                  {/* ── Docs ── */}
+                  <Route path="/docs" element={<DocsPage />} />
+
+                  {/* ── Fallback ── */}
+                  <Route path="*" element={<Navigate to="/chat" replace />} />
                 </Routes>
               </div>
             </AnimatePresence>

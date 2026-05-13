@@ -6,13 +6,20 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function formatRelativeTime(timestamp: number): string {
+  const normalizedTimestamp = normalizeUnixTimestampSeconds(timestamp);
   const now = Date.now() / 1000;
-  const diff = now - timestamp;
+  const diff = now - normalizedTimestamp;
   if (diff < 60) return 'just now';
   if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
-  return new Date(timestamp * 1000).toLocaleDateString('en-US');
+  return new Date(normalizedTimestamp * 1000).toLocaleDateString('en-US');
+}
+
+export function normalizeUnixTimestampSeconds(timestamp: number | null | undefined): number {
+  const value = Number(timestamp || 0);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return value > 1e12 ? Math.floor(value / 1000) : value;
 }
 
 export function formatUptime(startTimeOrUpdatedAt: string, updatedAt?: string): string {

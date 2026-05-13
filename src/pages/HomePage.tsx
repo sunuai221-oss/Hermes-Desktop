@@ -10,7 +10,7 @@ import { useProfiles } from '../contexts/ProfileContext';
 import { useRuntimeStatus } from '../hooks/useRuntimeStatus';
 import { useGatewayContext } from '../contexts/GatewayContext';
 import * as api from '../api';
-import { cn, formatRelativeTime } from '../lib/utils';
+import { cn, formatRelativeTime, normalizeUnixTimestampSeconds } from '../lib/utils';
 import type { CronJob, MemoryStore, NavItem, SessionEntry } from '../types';
 
 interface Props {
@@ -47,7 +47,7 @@ export function HomePage({ onNavigate, onOpenSessionInChat }: Props) {
 
   const recentSessions = useMemo(() => (
     Object.entries(gateway.sessions)
-      .sort((a, b) => getSessionTimestamp(b[1]) - getSessionTimestamp(a[1]))
+      .sort((a, b) => normalizeSessionTimestamp(b[1]) - normalizeSessionTimestamp(a[1]))
       .slice(0, 4)
   ), [gateway.sessions]);
 
@@ -139,7 +139,7 @@ export function HomePage({ onNavigate, onOpenSessionInChat }: Props) {
                 key={id}
                 title={session.title || id}
                 meta={`${session.source || 'api'} · ${session.model || 'default'} · ${formatRelativeTime(session.last_accessed || session.created_at || 0)}`}
-                onOpen={() => { onOpenSessionInChat(id); onNavigate('chat'); }}
+                onOpen={() => onOpenSessionInChat(id)}
               />
             ))}
           </div>
@@ -151,7 +151,7 @@ export function HomePage({ onNavigate, onOpenSessionInChat }: Props) {
           <Card className="p-5">
             <SectionHeader
               title="Memory"
-              action={{ label: 'Open', onClick: () => onNavigate('soul') }}
+              action={{ label: 'Open', onClick: () => onNavigate('identity') }}
             />
             <div className="mt-4 space-y-3">
               {memoryStores.length === 0 ? (
@@ -275,9 +275,8 @@ function EmptyState({ text }: { text: string }) {
 
 // ── Helpers ─────────────────────────────────────────────────────
 
-function getSessionTimestamp(session: SessionEntry) {
-  const candidate = session.last_accessed ?? session.created_at ?? 0;
-  return candidate > 1e12 ? candidate : candidate * 1000;
+function normalizeSessionTimestamp(session: SessionEntry) {
+  return normalizeUnixTimestampSeconds(session.last_accessed ?? session.created_at);
 }
 
 function extractUserName(content: string) {

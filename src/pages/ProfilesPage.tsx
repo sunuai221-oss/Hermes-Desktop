@@ -7,6 +7,7 @@ import { Card } from '../components/Card';
 import { StatusBadge } from '../components/StatusBadge';
 import { useProfiles } from '../contexts/ProfileContext';
 import { useFeedback } from '../contexts/FeedbackContext';
+import { useGatewayContext } from '../contexts/GatewayContext';
 import * as api from '../api';
 import { cn } from '../lib/utils';
 import type { NavItem } from '../hooks/useNavigation';
@@ -27,7 +28,8 @@ interface Props {
 }
 
 export function ProfilesPage({ onNavigate }: Props) {
-  const { currentProfile, switchProfile, createProfile, deleteProfile, startGateway, stopGateway } = useProfiles();
+  const { currentProfile, switchProfile, createProfile, deleteProfile } = useProfiles();
+  const gateway = useGatewayContext();
   const { confirm, notify } = useFeedback();
 
   const [profiles, setProfiles] = useState<ProfileMeta[]>([]);
@@ -65,13 +67,13 @@ export function ProfilesPage({ onNavigate }: Props) {
 
   const handleStart = async (name: string) => {
     setBusyName(name);
-    try { await startGateway(name); await fetchProfiles(); }
+    try { await gateway.startGateway(name); await fetchProfiles(); }
     finally { setBusyName(null); }
   };
 
   const handleStop = async (name: string) => {
     setBusyName(name);
-    try { await stopGateway(name); await fetchProfiles(); }
+    try { await gateway.stopGateway(name); await fetchProfiles(); }
     finally { setBusyName(null); }
   };
 
@@ -186,7 +188,7 @@ export function ProfilesPage({ onNavigate }: Props) {
 
       {/* Quick links */}
       <div className="flex flex-wrap gap-2 pt-2">
-        <QuickLink label="Agent Studio" onClick={() => onNavigate('soul')} />
+        <QuickLink label="Identity" onClick={() => onNavigate('identity')} />
         <QuickLink label="Config" onClick={() => onNavigate('config')} />
         <QuickLink label="Sessions" onClick={() => onNavigate('sessions')} />
       </div>

@@ -33,8 +33,33 @@ export function PlatformsPage() {
       </div>
 
       {platforms.length === 0 ? (
-        <Card className="p-16 text-center">
-          <p className="text-muted-foreground">No platform detected. Is the gateway running?</p>
+        <Card className="p-16 text-center space-y-4">
+          <div className="flex flex-col items-center gap-3">
+            <svg className="h-12 w-12 text-muted-foreground/30" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.14 0M1.394 9.393c5.857-5.858 15.355-5.858 21.213 0" />
+            </svg>
+            <div>
+              <p className="text-sm text-muted-foreground">No platform detected.</p>
+              <p className="mt-1 text-xs text-muted-foreground/60">
+                Hermes uses the gateway runtime to connect providers.
+                <br/>Make sure the gateway is running and providers are configured.
+              </p>
+            </div>
+            <div className="flex gap-2 mt-2">
+              <a
+                href="/#/config"
+                className="text-xs rounded-lg bg-primary px-4 py-2 font-semibold text-primary-foreground hover:opacity-90 transition-opacity"
+              >
+                Open Config
+              </a>
+              <a
+                href="/#/identity"
+                className="text-xs rounded-lg border border-border px-4 py-2 font-semibold text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Check Identity
+              </a>
+            </div>
+          </div>
         </Card>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">

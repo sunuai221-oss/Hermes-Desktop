@@ -10,3 +10,8 @@ export function useGatewayContext(): GatewayHook {
   }
   return ctx;
 }
+
+// Compatibility alias while call sites migrate to the canonical context hook.
+export function useGateway(): GatewayHook {
+  return useGatewayContext();
+}

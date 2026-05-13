@@ -155,7 +155,7 @@ export function ContextFilesPage() {
             <span className="text-muted-foreground">is part of the active profile.</span>
           </div>
           <span className="flex items-center gap-1 text-amber-400 text-xs font-medium">
-            Edit in Agent Studio <ExternalLink size={12} />
+            Edit in Identity <ExternalLink size={12} />
           </span>
         </button>
       )}

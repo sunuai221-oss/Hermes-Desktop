@@ -79,6 +79,10 @@ function resolveHermesHome({ builderRoot, distro = 'Ubuntu', env = process.env }
     wslCandidate,
   ].filter(Boolean);
 
+  if (explicit && getHermesHomeScore(explicit) > 0) {
+    return explicit;
+  }
+
   const ranked = candidates
     .map(candidate => ({ candidate, score: getHermesHomeScore(candidate) }))
     .sort((a, b) => b.score - a.score);
@@ -156,6 +160,8 @@ function getHermesHome(hermesBase, profileName) {
  */
 function resolveProfilePaths(profileName, hermesHome, localStateHome) {
   const appState = resolveLocalAppStateDir(profileName, localStateHome);
+  const globalAppState = resolveLocalAppStateDir('default', localStateHome);
+  const agentStudioDir = path.join(globalAppState, 'agent-studio');
   return {
     home: hermesHome,
     soul: path.join(hermesHome, 'SOUL.md'),
@@ -176,6 +182,9 @@ function resolveProfilePaths(profileName, hermesHome, localStateHome) {
     cronOutput: path.join(hermesHome, 'cron', 'output'),
     appState,
     agents: path.join(appState, 'agents.json'),
+    agentStudioDir,
+    agentStudioLibrary: path.join(agentStudioDir, 'library.json'),
+    agentStudioWorkspaces: path.join(agentStudioDir, 'workspaces.json'),
   };
 }
 

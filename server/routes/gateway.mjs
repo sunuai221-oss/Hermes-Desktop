@@ -208,14 +208,18 @@ export function registerGatewayRoutes({
     }
   });
 
-  app.get('/api/gateway/process-status', async (req, res) => {
+  const handleGatewayProcessStatus = async (req, res) => {
     try {
       const status = await resolveGatewayProcessStatus(req.hermes, gatewayManager);
       res.json(sanitizeForClient(status));
     } catch (error) {
       res.status(500).json({ error: 'Failed to get gateway status', details: error.message });
     }
-  });
+  };
+
+  app.get('/api/gateway/process-status', handleGatewayProcessStatus);
+  // Compatibility alias retained for existing clients/tests.
+  app.get('/api/gateway/status', handleGatewayProcessStatus);
 
   app.get('/api/gateway/diagnostics', async (req, res) => {
     try {

@@ -23,15 +23,8 @@ export function useRuntimeStatus(
   fallbackStatus?: ConnectionStatus,
 ): { status: ConnectionStatus; label: string } {
   return useMemo(() => {
-    const status: ConnectionStatus =
-      gateway.health === 'online'
-        ? 'online'
-        : gateway.health === 'direct'
-          ? 'direct'
-          : gateway.processStatus?.pid
-            ? 'degraded'
-            : fallbackStatus ?? gateway.health;
+    const status: ConnectionStatus = gateway.runtimeStatus || fallbackStatus || gateway.health;
 
     return { status, label: statusLabels[status] ?? status };
-  }, [gateway.health, gateway.processStatus?.pid, fallbackStatus]);
+  }, [gateway.health, gateway.runtimeStatus, fallbackStatus]);
 }

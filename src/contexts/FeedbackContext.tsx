@@ -1,5 +1,7 @@
 import { createContext, useContext } from 'react';
 
+// ── Types ──
+
 export type ToastTone = 'info' | 'success' | 'warning' | 'error';
 
 export type ToastInput = {
@@ -32,6 +34,8 @@ export type FeedbackContextValue = {
   confirm: (options: ConfirmOptions) => Promise<boolean>;
   prompt: (options: PromptOptions) => Promise<string | null>;
 };
+
+// ── Context + Hook ──
 
 export const FeedbackContext = createContext<FeedbackContextValue | undefined>(undefined);
 

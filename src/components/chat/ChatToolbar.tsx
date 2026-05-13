@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
-import { BrainCircuit, KeyRound, Trash2, Volume2 } from 'lucide-react';
+import { BrainCircuit, KeyRound, Loader2, Plus, Trash2, Volume2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import type { ChatUsage, ConnectionStatus } from '../../types';
+import type { AgentWorkspace, ChatUsage, ConnectionStatus } from '../../types';
 
 interface ChatToolbarProps {
   currentProfile: string;
@@ -18,6 +18,12 @@ interface ChatToolbarProps {
   onVoiceModeToggle: () => void;
   hasMessages: boolean;
   onNewChat: () => void;
+  workspaces?: AgentWorkspace[];
+  selectedWorkspaceId?: string;
+  importingWorkspace?: boolean;
+  workspaceImportError?: string;
+  onWorkspaceChange?: (id: string) => void;
+  onImportWorkspace?: () => void;
 }
 
 export function ChatToolbar({
@@ -35,6 +41,12 @@ export function ChatToolbar({
   onVoiceModeToggle,
   hasMessages,
   onNewChat,
+  workspaces = [],
+  selectedWorkspaceId = '',
+  importingWorkspace = false,
+  workspaceImportError = '',
+  onWorkspaceChange,
+  onImportWorkspace,
 }: ChatToolbarProps) {
   return (
     <div className="flex items-center justify-between mb-4 flex-shrink-0 gap-3">
@@ -123,6 +135,35 @@ export function ChatToolbar({
           <Volume2 size={13} />
           {voiceMode ? 'Voice ON' : 'Voice OFF'}
         </button>
+
+        {workspaces.length > 0 && (
+          <div className="flex items-center gap-1.5 rounded-full border border-border bg-muted px-2 py-1">
+            <select
+              value={selectedWorkspaceId}
+              onChange={event => onWorkspaceChange?.(event.target.value)}
+              className="max-w-[180px] bg-transparent text-xs text-foreground focus:outline-none"
+              title="Workspace"
+            >
+              {workspaces.map(workspace => (
+                <option key={workspace.id} value={workspace.id}>{workspace.name}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={onImportWorkspace}
+              disabled={!selectedWorkspaceId || importingWorkspace}
+              className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/15 disabled:opacity-50"
+              title="Import workspace"
+            >
+              {importingWorkspace ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+              Import workspace
+            </button>
+          </div>
+        )}
+
+        {workspaceImportError && (
+          <p className="text-[11px] text-destructive">{workspaceImportError}</p>
+        )}
       </div>
 
       {hasMessages && (
