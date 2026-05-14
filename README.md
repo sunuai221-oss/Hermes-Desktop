@@ -22,6 +22,21 @@ A local-first desktop environment for running and controlling Hermes AI agents o
 
 Hermes Desktop gives Hermes a repeatable local operator workflow on Windows. Instead of relying on ad hoc browser tabs, manual port handling, and one-off WSL commands, it provides a stable desktop entrypoint that stays close to the local runtime.
 
+## Latest Cockpit Refresh
+
+The current GitHub version includes the new local cockpit surfaces that were previously only in the working tree:
+
+- **Templates**: a searchable agent template library with bundled offline templates, source/category filters, preferred skill controls, import from local path, URL, or Git source, and a default agency import flow.
+- **Workspaces**: a visual multi-agent canvas where templates can be dragged into a workspace, selected, configured, connected with relationships, and executed with shared context and common rules.
+- **Workspace relations**: workspace nodes are no longer isolated cards only. The editor stores and renders directed relations between agents so a workspace can express an actual flow, handoff, or review chain.
+- **Generated workspace interface**: each workspace can open a generated chat interface that uses the configured agents, roles, context, rules, and relations as the active conversation frame.
+- **Chat import workspace**: the Chat page can import a workspace directly, so an existing workspace plan can seed a normal chat session without rebuilding the prompt manually.
+- **Identity and memory cockpit**: the former Soul surface is now organized into Identity panels for memory, conversation search, and profile identity work.
+- **Kanban and Docs pages**: local project tracking and documentation views are now part of the desktop navigation.
+- **Backend split**: Agent Studio, profiles, identity, kanban, context files, media, gateway, and runtime features are exposed through smaller backend routes and services instead of one large entrypoint.
+
+For a guided walkthrough of the Templates and Workspaces flow, see [`docs/templates-workspaces-tutorial.md`](docs/templates-workspaces-tutorial.md).
+
 ## Screenshots
 
 ### Chat interface
@@ -29,12 +44,6 @@ Hermes Desktop gives Hermes a repeatable local operator workflow on Windows. Ins
 Main interaction view for working with Hermes agents in real time.
 
 ![Hermes Desktop chat interface](docs/screenshots/chat-20260419.png)
-
-### Delegation system
-
-Interface for orchestrating multi-agent workflows and task delegation.
-
-![Hermes Desktop delegation system](docs/screenshots/delegation-20260419.png)
 
 ## Platform Support
 
@@ -164,7 +173,8 @@ Main backend surfaces:
 - `/api/sessions/*`: local session CRUD, transcripts, continuation, resume, export, and stats.
 - `/api/skills`, `/api/skills/content`, `/api/skills/enabled`: local/external skill listing, editing, and enable/disable state.
 - `/api/plugins` and `/api/hooks`: extension and hook discovery.
-- `/api/config`, `/api/profiles/*`, `/api/agents/*`, `/api/memory/*`, `/api/context-files/*`, `/api/cronjobs/*`: runtime configuration, profile management, agent presets, memory, context references, and automations.
+- `/api/agent-studio/*`: template library, bundled agency import, workspace CRUD, workspace execution, and generated workspace chat.
+- `/api/config`, `/api/profiles/*`, `/api/identity/*`, `/api/kanban/*`, `/api/media/*`, `/api/memory/*`, `/api/context-files/*`, `/api/cronjobs/*`: runtime configuration, profile management, identity, local planning, media, memory, context references, and automations.
 
 ## Does Hermes Desktop depend on a web app?
 
@@ -298,6 +308,7 @@ For more detail, see `docs/troubleshooting.md`.
 - `docs/troubleshooting.md`
 - `docs/repository-notes.md`
 - `docs/product-roadmap.md`
+- `docs/templates-workspaces-tutorial.md`
 - `docs/wsl-windows-workflow.md`
 - `CONTRIBUTING.md`
 - `SECURITY.md`
