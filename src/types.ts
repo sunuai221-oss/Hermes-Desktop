@@ -120,6 +120,63 @@ export interface PluginInfo {
   hasToolsPy: boolean;
 }
 
+export interface PawrtalCompanion {
+  id: string;
+  displayName: string;
+  description?: string;
+  packDir?: string;
+}
+
+export interface PawrtalStatusState {
+  target?: string;
+  session?: string;
+  activePetId?: string;
+  displayName?: string;
+  packDir?: string;
+  manifestPath?: string;
+  spritesheetPath?: string;
+  [key: string]: unknown;
+}
+
+export interface PawrtalDesktopState {
+  target?: string;
+  session?: string;
+  activePetId?: string;
+  pid?: number;
+  startedAt?: string;
+  running?: boolean;
+  [key: string]: unknown;
+}
+
+export interface PawrtalStatusResponse {
+  ok: boolean;
+  session?: string;
+  active?: PawrtalStatusState | null;
+  desktop?: PawrtalDesktopState | null;
+  relay?: Record<string, unknown> | null;
+  activity?: Record<string, unknown> | null;
+  stateDir?: string;
+  errorCode?: string;
+  httpStatus?: number;
+  error?: string;
+  details?: string;
+}
+
+export interface PawrtalCommandResult {
+  ok: boolean;
+  command?: string;
+  stdout?: string;
+  stderr?: string;
+  code?: number | null;
+  errorCode?: string;
+  httpStatus?: number;
+  error?: string;
+  details?: string;
+  session?: string;
+  petId?: string | null;
+  [key: string]: unknown;
+}
+
 export interface CronJob {
   id: string;
   name?: string;
@@ -264,11 +321,10 @@ export interface HermesConfig {
   group_sessions_per_user?: boolean;
   unauthorized_dm_behavior?: string;
   streaming?: { enabled?: boolean; transport?: string; edit_interval?: number; buffer_threshold?: number; cursor?: string };
-  display?: { tool_progress?: string; background_process_notifications?: string };
+  display?: { tool_progress?: string; background_process_notifications?: string; live2d_enabled?: boolean };
   stt?: { enabled?: boolean };
   tts?: {
-    mode?: 'kokoro' | string;
-    provider?: 'kokoro' | 'neutts-server' | string;
+    provider?: string;
     neutts_server?: {
       base_url?: string;
       timeout_ms?: number;
@@ -276,53 +332,6 @@ export interface HermesConfig {
     neuttsServer?: {
       baseUrl?: string;
       timeoutMs?: number;
-    };
-    kokoro?: {
-      runtime?: {
-        base_url?: string;
-        model?: string;
-        speed?: number;
-        response_format?: 'wav' | 'mp3' | 'opus' | 'flac' | 'pcm' | string;
-        lang_code?: string;
-        normalize?: boolean;
-        volume_multiplier?: number;
-      };
-      preprocess?: {
-        enabled?: boolean;
-        mode?: string;
-        normalize_whitespace?: boolean;
-        restore_basic_punctuation?: boolean;
-        split_flat_long_sentences?: boolean;
-        preserve_meaning?: boolean;
-      };
-      routing?: {
-        enabled?: boolean;
-        strategy?: string;
-        detect_language?: string;
-        voice_fr?: string;
-        voice_en?: string;
-        fallback_voice?: string;
-        uncertain_language_policy?: string;
-      };
-      concatenation?: {
-        enabled?: boolean;
-        gap_ms?: number;
-        trim_segment_edges?: boolean;
-        skip_concat_when_single_segment?: boolean;
-      };
-      // Legacy aliases still read by the backend.
-      base_url?: string;
-      model?: string;
-      voice?: string;
-      speed?: number;
-      response_format?: 'wav' | 'mp3' | 'opus' | 'flac' | 'pcm' | string;
-      auto_language?: boolean;
-      lang_code?: string;
-      voice_en?: string;
-      voice_fr?: string;
-      voice_multilingual?: string;
-      normalize?: boolean;
-      volume_multiplier?: number;
     };
   };
   terminal?: {
@@ -340,6 +349,12 @@ export interface HermesConfig {
   reset_triggers?: string[];
   quick_commands?: Record<string, string>;
   platforms?: Record<string, unknown>;
+  pawrtal?: {
+    auto_start?: boolean;
+    default_pet_id?: string;
+    default_session?: string;
+    reset_before_spawn?: boolean;
+  };
   [key: string]: unknown;
 }
 
@@ -503,6 +518,7 @@ export interface AgentWorkspace {
   id: string;
   name: string;
   description?: string;
+  pipelineBrief?: string;
   sharedContext: string;
   commonRules: string;
   defaultMode: 'prompt' | 'delegate' | 'profiles';
@@ -550,4 +566,55 @@ export interface AgentWorkspaceExecutionResult {
   output?: string;
   runs?: AgentWorkspaceExecutionRun[];
   response?: unknown;
+}
+
+export interface WorkspaceAutoConfigNodePatch {
+  nodeId: string;
+  role?: WorkspaceAgentRole;
+  label?: string;
+  profileName?: string;
+  modelOverride?: string;
+  skills?: string[];
+  toolsets?: string[];
+}
+
+export interface WorkspaceAutoConfigEdge {
+  fromNodeId: string;
+  toNodeId: string;
+  kind: WorkspaceEdgeKind;
+  template?: string;
+}
+
+export interface WorkspaceAutoConfigSuggestion {
+  summary?: string;
+  workspacePatch: Partial<Pick<AgentWorkspace, 'description' | 'pipelineBrief' | 'sharedContext' | 'commonRules' | 'defaultMode'>>;
+  nodes: WorkspaceAutoConfigNodePatch[];
+  edges: WorkspaceAutoConfigEdge[];
+}
+
+export interface WorkspaceAutoConfigPreviewResult {
+  success: true;
+  workspaceId: string;
+  pipelineBrief: string;
+  prompt: string;
+  suggestion: WorkspaceAutoConfigSuggestion;
+  raw: string;
+}
+
+export type WorkspaceAutoConfigDiffCategory = 'workspace' | 'mode' | 'node' | 'edge';
+
+export interface WorkspaceAutoConfigDiffItem {
+  id: string;
+  category: WorkspaceAutoConfigDiffCategory;
+  title: string;
+  before?: string;
+  after?: string;
+  detail?: string;
+}
+
+export interface WorkspaceAutoConfigPlan {
+  patch: Partial<AgentWorkspace> & Pick<AgentWorkspace, 'nodes' | 'edges'>;
+  nextWorkspace: AgentWorkspace;
+  items: WorkspaceAutoConfigDiffItem[];
+  hasChanges: boolean;
 }

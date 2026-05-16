@@ -45,6 +45,14 @@ export function getVoiceStatusLabel(voiceState: VoiceState, voiceMode: boolean):
   return voiceMode ? 'Voice mode active' : 'Voice mode inactive';
 }
 
+// ── Voice event dispatch (for lipsync) ───────────────────────────
+
+function dispatchVoiceEvent(state: 'start' | 'end') {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('hermes:voice:speaking', { detail: { state } }));
+  }
+}
+
 // ── Audio playback (former chatAudioPlayback.ts) ──
 
 type SetState<T> = (value: T | ((current: T) => T)) => void;
@@ -88,12 +96,32 @@ export function createAudioPlayback(params: CreateAudioPlaybackParams) {
     const audio = params.audioRef.current;
     if (!audioUrl || !audio) return;
     audio.pause();
+
+    const cleanup = () => {
+      audio.removeEventListener('ended', handleEnded);
+      audio.removeEventListener('error', handleError);
+    };
+    function handleEnded() {
+      dispatchVoiceEvent('end');
+      cleanup();
+      params.setVoiceState('idle');
+    }
+    function handleError() {
+      dispatchVoiceEvent('end');
+      cleanup();
+    }
+
+    audio.addEventListener('ended', handleEnded, { once: true });
+    audio.addEventListener('error', handleError, { once: true });
     audio.src = audioUrl;
     audio.load();
     try {
       params.setVoiceState('speaking');
       await audio.play();
+      dispatchVoiceEvent('start');
     } catch (error) {
+      cleanup();
+      dispatchVoiceEvent('end');
       const errorName = typeof error === 'object' && error && 'name' in error ? String(error.name) : '';
       params.setVoiceError(
         errorName === 'NotAllowedError'
@@ -115,9 +143,10 @@ export function createAudioPlayback(params: CreateAudioPlaybackParams) {
         audio.removeEventListener('error', handleError);
         signal?.removeEventListener('abort', handleAbort);
       };
-      const handleEnded = () => { cleanup(); resolve(); };
-      const handleError = () => { cleanup(); void releaseAudioUrl(audioUrl); reject(new Error('Audio playback failed')); };
+      const handleEnded = () => { dispatchVoiceEvent('end'); cleanup(); resolve(); };
+      const handleError = () => { dispatchVoiceEvent('end'); cleanup(); void releaseAudioUrl(audioUrl); reject(new Error('Audio playback failed')); };
       const handleAbort = () => {
+        dispatchVoiceEvent('end');
         cleanup(); audio.pause(); audio.removeAttribute('src'); audio.load();
         void releaseAudioUrl(audioUrl); reject(createVoiceAbortError());
       };
@@ -129,7 +158,15 @@ export function createAudioPlayback(params: CreateAudioPlaybackParams) {
       audio.src = audioUrl;
       audio.load();
       params.setVoiceState('speaking');
-      audio.play().catch(error => { cleanup(); void releaseAudioUrl(audioUrl); reject(error); });
+      audio.play()
+        .then(() => dispatchVoiceEvent('start'))
+        .catch(error => {
+          dispatchVoiceEvent('end');
+          cleanup();
+          params.setVoiceState('idle');
+          void releaseAudioUrl(audioUrl);
+          reject(error);
+        });
     });
   };
 
@@ -155,6 +192,7 @@ export function createAudioController(params: CreateAudioControllerParams) {
     const audio = params.audioRef.current;
     const playingAudioUrl = String(audio?.currentSrc || audio?.src || '').trim();
     if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load(); }
+    dispatchVoiceEvent('end');
     params.setSpeakingMessageIndex(null);
     params.setVoiceState('idle');
     if (playingAudioUrl) void params.releaseAudioUrl(playingAudioUrl);
@@ -206,6 +244,7 @@ export function useAudioEndedCleanup(params: {
     if (!audio) return;
     const handler = () => {
       const finishedAudioUrl = String(audio.currentSrc || audio.src || '').trim();
+      dispatchVoiceEvent('end');
       setVoiceState('idle');
       audio.removeAttribute('src');
       audio.load();
@@ -316,7 +355,7 @@ export function createHandleVoiceToggle(params: CreateVoiceToggleParams): () => 
           await params.playAudio(response.data.audioUrl);
         } catch (error) {
           console.error(error);
-          params.setVoiceError('Voice pipeline failed. Check STT, Kokoro TTS, and the gateway.');
+          params.setVoiceError('Voice pipeline failed. Check STT, NeuTTS Server, and the gateway.');
           params.setVoiceState('idle');
         }
       });

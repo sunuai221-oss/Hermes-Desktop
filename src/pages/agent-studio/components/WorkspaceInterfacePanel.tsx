@@ -1,7 +1,8 @@
-import { ArrowRight, Loader2, MessageSquare, Send } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { CheckCircle2, Loader2, MessageSquare, Send } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as api from '../../../api';
 import { Card } from '../../../components/Card';
+import { cn } from '../../../lib/utils';
 import type { AgentDefinition, AgentWorkspace } from '../../../types';
 
 type WorkspaceInterfaceMessage = {
@@ -39,21 +40,46 @@ export function WorkspaceInterfacePanel({
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<WorkspaceInterfaceMessage[]>([]);
   const [running, setRunning] = useState(false);
+  const [agentProgress, setAgentProgress] = useState<Record<string, 'pending' | 'running' | 'done'>>({});
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
   const agentNames = useMemo(() => {
     if (!workspace) return [];
     return workspace.nodes.map(node => node.label || agentsById.get(node.agentId)?.name || 'Missing agent');
   }, [agentsById, workspace]);
+
+  const autoScroll = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, []);
+
+  useEffect(() => { autoScroll(); }, [messages, agentProgress, autoScroll]);
 
   const send = async () => {
     const task = input.trim();
     if (!workspace || !task || running) return;
     setInput('');
     setRunning(true);
-    onError('');
+  onError('');
 
     const userMessage: WorkspaceInterfaceMessage = { id: messageId(), role: 'user', content: task };
     const assistantId = messageId();
     setMessages(current => [...current, userMessage, { id: assistantId, role: 'assistant', content: '' }]);
+
+    // Show each agent as "running" with a staggered reveal
+    const progress: Record<string, 'pending' | 'running' | 'done'> = {};
+    workspace.nodes.forEach((node, i) => {
+      const label = node.label || agentsById.get(node.agentId)?.name || `Agent ${i + 1}`;
+      progress[label] = i === 0 ? 'running' : 'pending';
+    });
+    setAgentProgress(progress);
+
+    // Stagger the agent progress indicators
+    workspace.nodes.forEach((node, i) => {
+      const label = node.label || agentsById.get(node.agentId)?.name || `Agent ${i + 1}`;
+      setTimeout(() => {
+        setAgentProgress(prev => ({ ...prev, [label]: 'running' }));
+      }, (i + 1) * 800);
+    });
 
     try {
       const saved = await saveWorkspace();
@@ -62,10 +88,31 @@ export function WorkspaceInterfacePanel({
         task,
         mode: saved.defaultMode,
       });
+
+      const runs = response.data.runs || [];
+      // runs available if needed
+
+      // Mark all agents as done
+      const doneProgress: Record<string, 'done'> = {};
+      workspace.nodes.forEach((node) => {
+        const label = node.label || agentsById.get(node.agentId)?.name || 'Agent';
+        doneProgress[label] = 'done';
+      });
+      setAgentProgress(doneProgress);
+
       const content = response.data.output || response.data.prompt || 'No workspace output.';
-      setMessages(current => current.map(message =>
-        message.id === assistantId ? { ...message, content } : message,
-      ));
+
+      // Staggered reveal: split by runs then reveal progressively
+      if (runs.length > 0) {
+        const parts = runs.map(r => r.output || '').filter(Boolean);
+        if (parts.length > 0) {
+          revealProgressively(assistantId, parts.join('\n\n---\n\n'), setMessages);
+        } else {
+          revealProgressively(assistantId, content, setMessages);
+        }
+      } else {
+        revealProgressively(assistantId, content, setMessages);
+      }
     } catch (error) {
       const content = formatError(error, 'Could not run workspace interface.');
       setMessages(current => current.map(message =>
@@ -101,16 +148,42 @@ export function WorkspaceInterfacePanel({
                 <p className="mt-1 text-lg font-semibold">{(workspace.edges || []).length}</p>
               </div>
             </div>
+
+            {/* Agent progress indicators */}
             <div className="mt-4 space-y-2">
-              {agentNames.map((name, index) => (
-                <div key={`${name}-${index}`} className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm">
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-muted text-[10px] font-semibold">
-                    {index + 1}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">{name}</span>
-                  <ArrowRight size={13} className="text-muted-foreground" />
-                </div>
-              ))}
+              {agentNames.map((name, index) => {
+                const status = agentProgress[name] || 'pending';
+                return (
+                  <div
+                    key={`${name}-${index}`}
+                    className={cn(
+                      'flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-all',
+                      status === 'running'
+                        ? 'border-primary/30 bg-primary/8'
+                        : status === 'done'
+                          ? 'border-success/20 bg-success/5'
+                          : 'border-border',
+                    )}
+                  >
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-muted text-[10px] font-semibold">
+                      {index + 1}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">{name}</span>
+                    {status === 'running' && (
+                      <span className="relative flex h-2 w-2 shrink-0">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+                        <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+                      </span>
+                    )}
+                    {status === 'done' && (
+                      <CheckCircle2 size={14} className="shrink-0 text-success" />
+                    )}
+                    {status === 'pending' && (
+                      <span className="h-2 w-2 shrink-0 rounded-full bg-muted-foreground/30" />
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </aside>
 
@@ -139,6 +212,7 @@ export function WorkspaceInterfacePanel({
                   </div>
                 </div>
               ))}
+              <div ref={messagesEndRef} />
             </div>
 
             <div className="border-t border-border p-3">
@@ -173,4 +247,34 @@ export function WorkspaceInterfacePanel({
       )}
     </Card>
   );
+}
+
+// ── Typewriter reveal helper ─────────────────────────────────────
+
+function revealProgressively(
+  messageId: string,
+  content: string,
+  setMessages: React.Dispatch<React.SetStateAction<WorkspaceInterfaceMessage[]>>,
+) {
+  // If content is short, show it immediately
+  if (content.length <= 200) {
+    setMessages(current => current.map(m =>
+      m.id === messageId ? { ...m, content } : m,
+    ));
+    return;
+  }
+
+  // Progressive reveal in chunks
+  const chunkSize = 80;
+  let pos = 0;
+  const interval = setInterval(() => {
+    pos += chunkSize;
+    if (pos >= content.length) {
+      pos = content.length;
+      clearInterval(interval);
+    }
+    setMessages(current => current.map(m =>
+      m.id === messageId ? { ...m, content: content.slice(0, pos) } : m,
+    ));
+  }, 30);
 }

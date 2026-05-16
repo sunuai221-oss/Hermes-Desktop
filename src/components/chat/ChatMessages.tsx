@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Bot, Check, Copy, KeyRound, Mic, Square, User, Volume2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { Message } from '../../types';
+import { ShizukuAvatar, type ShizukuAvatarRef } from '../avatar/ShizukuAvatar';
+import { useDetachedShizukuState } from '../../features/companions/detachedShizuku';
+import { getLive2DAvatarDefinition } from '../../features/companions/live2dAvatars';
 
 interface ChatMessagesProps {
   messages: Message[];
@@ -98,9 +101,11 @@ export function ChatMessages({
     return (
       <div className="flex-1 flex items-center justify-center h-full min-h-[40vh]">
         <div className="text-center">
-          <Bot size={40} className="mx-auto mb-3 text-muted-foreground/30" />
+          <div className="mx-auto mb-4 flex h-[180px] w-[140px] items-center justify-center">
+            <AssistantAvatar width={140} height={180} fallbackSize={40} showStatus />
+          </div>
           <p className="text-muted-foreground text-sm">Send a message, attach context, paste an image, or speak through the microphone.</p>
-          <p className="text-muted-foreground/50 text-xs mt-1">Vision multi-images + push-to-talk + Kokoro TTS backend.</p>
+          <p className="text-muted-foreground/50 text-xs mt-1">Vision multi-images + push-to-talk + NeuTTS backend.</p>
         </div>
       </div>
     );
@@ -117,14 +122,19 @@ export function ChatMessages({
               message.role === 'user' ? 'ml-auto flex-row-reverse' : 'mr-auto',
             )}
           >
-            <div className={cn(
-              'mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md',
-              message.role === 'user'
-                ? 'bg-primary/90 text-primary-foreground'
-                : 'border border-border/40 bg-background/20 text-muted-foreground/80',
-            )}>
-              {message.role === 'user' ? <User size={13} /> : <Bot size={13} />}
-            </div>
+            {message.role === 'user' ? (
+              <div className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-primary/90 text-primary-foreground">
+                <User size={13} />
+              </div>
+            ) : index === messages.length - 1 ? (
+              <div className="mt-0.5 flex-shrink-0">
+                <AssistantAvatar width={86} height={116} fallbackSize={18} active={streaming && message.role === 'assistant'} compact />
+              </div>
+            ) : (
+              <div className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md border border-border/40 bg-background/20 text-muted-foreground/80">
+                <Bot size={13} />
+              </div>
+            )}
             <div className={cn(
               'text-sm leading-relaxed',
               message.role === 'user'
@@ -152,7 +162,12 @@ export function ChatMessages({
                         preload="none"
                         src={message.audioUrl}
                         className="mt-3 w-full max-w-sm"
-                        onEnded={() => onMessageAudioEnded?.(message.audioUrl!)}
+                        onPlay={() => dispatchAvatarVoiceEvent('start')}
+                        onPause={() => dispatchAvatarVoiceEvent('end')}
+                        onEnded={() => {
+                          dispatchAvatarVoiceEvent('end');
+                          onMessageAudioEnded?.(message.audioUrl!);
+                        }}
                       />
                     )}
                     {hasMessageText && (
@@ -188,6 +203,71 @@ export function ChatMessages({
       ))}
       <div ref={chatEndRef} />
     </div>
+  );
+}
+
+function dispatchAvatarVoiceEvent(state: 'start' | 'end') {
+  window.dispatchEvent(new CustomEvent('hermes:voice:speaking', { detail: { state } }));
+}
+
+function AssistantAvatar({
+  width,
+  height,
+  fallbackSize,
+  active = false,
+  compact = false,
+  showStatus = false,
+}: {
+  width: number;
+  height: number;
+  fallbackSize: number;
+  active?: boolean;
+  compact?: boolean;
+  showStatus?: boolean;
+}) {
+  const [failedAvatarId, setFailedAvatarId] = useState<string | null>(null);
+  const [detachedShizuku] = useDetachedShizukuState();
+  const avatar = getLive2DAvatarDefinition(detachedShizuku.avatarId);
+  const shizukuRef = useRef<ShizukuAvatarRef>(null);
+  const live2dUnavailable = failedAvatarId === avatar.id;
+
+  // ── Lipsync: listen for voice events ──────────────────────────
+  useEffect(() => {
+    const handleVoice = (event: Event) => {
+      const detail = (event as CustomEvent<{ state: string }>).detail;
+      if (detail.state === 'start') {
+        shizukuRef.current?.startTalking();
+      } else {
+        shizukuRef.current?.stopTalking();
+      }
+    };
+    window.addEventListener('hermes:voice:speaking', handleVoice);
+    return () => window.removeEventListener('hermes:voice:speaking', handleVoice);
+  }, []);
+
+  if (live2dUnavailable) {
+    return (
+      <div className={cn(
+        'flex items-center justify-center border border-border/40 bg-background/20 text-muted-foreground/80',
+        compact ? 'rounded-lg' : 'h-full w-full rounded-lg',
+      )}
+        style={compact ? { width, height } : undefined}
+      >
+        <Bot size={fallbackSize} />
+      </div>
+    );
+  }
+
+  return (
+    <ShizukuAvatar
+      ref={shizukuRef}
+      avatar={avatar}
+      width={width}
+      height={height}
+      active={active}
+      showStatus={showStatus}
+      onError={() => setFailedAvatarId(avatar.id)}
+    />
   );
 }
 

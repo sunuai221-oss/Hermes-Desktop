@@ -1,8 +1,11 @@
-import { Suspense, lazy, useCallback, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
+import { DetachedShizukuOverlay } from './components/avatar/DetachedShizukuOverlay';
+import { updateDetachedShizukuState, resetDetachedShizukuPosition } from './features/companions/detachedShizuku';
+import { LIVE2D_AVATARS } from './features/companions/live2dAvatars';
 import { useNavigation } from './hooks/useNavigation';
 import { useRuntimeStatus } from './hooks/useRuntimeStatus';
 import { useGatewayContext } from './contexts/GatewayContext';
@@ -25,6 +28,7 @@ const KanbanPage = lazy(() => import('./pages/KanbanPage').then(module => ({ def
 const ConfigPage = lazy(() => import('./pages/ConfigPage').then(module => ({ default: module.ConfigPage })));
 const SessionsPage = lazy(() => import('./pages/SessionsPage').then(module => ({ default: module.SessionsPage })));
 const ChatPage = lazy(() => import('./pages/ChatPage').then(module => ({ default: module.ChatPage })));
+const CompanionsPage = lazy(() => import('./pages/CompanionsPage').then(module => ({ default: module.CompanionsPage })));
 const SkillsPage = lazy(() => import('./pages/SkillsPage').then(module => ({ default: module.SkillsPage })));
 const ProfilesPage = lazy(() => import('./pages/ProfilesPage').then(module => ({ default: module.ProfilesPage })));
 const DocsPage = lazy(() => import('./pages/DocsPage').then(module => ({ default: module.DocsPage })));
@@ -65,11 +69,56 @@ function AppShell() {
     onBeforeOpen: closeSidebarOnMobile,
   });
 
+  const canLeaveCurrentPage = useCallback(async () => {
+    if (location.pathname !== '/workspaces') return true;
+    return window.hermesWorkspaceNavigationGuard?.() ?? true;
+  }, [location.pathname]);
+
   const handleNavigate = (tab: NavItem) => {
-   // docs handled via react-router
-    closeSidebarOnMobile();
-    navigate(navPathMap[tab]);
+    void (async () => {
+      if (!(await canLeaveCurrentPage())) return;
+      closeSidebarOnMobile();
+      navigate(navPathMap[tab]);
+    })();
   };
+
+  // ── Global keyboard shortcuts ─────────────────────────────────
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || !event.shiftKey) return;
+
+      switch (event.code) {
+        case 'KeyA':
+          event.preventDefault();
+          updateDetachedShizukuState(current => ({ visible: !current.visible }));
+          break;
+        case 'KeyR':
+          event.preventDefault();
+          resetDetachedShizukuPosition();
+          break;
+        case 'Digit1':
+        case 'Digit2':
+        case 'Digit3':
+        case 'Digit4':
+        case 'Digit5':
+        case 'Digit6':
+        case 'Digit7':
+        case 'Digit8':
+        case 'Digit9': {
+          event.preventDefault();
+          const index = Number(event.code.replace('Digit', '')) - 1;
+          const avatar = LIVE2D_AVATARS[index];
+          if (avatar) {
+            updateDetachedShizukuState({ avatarId: avatar.id, visible: true });
+          }
+          break;
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   return (
     <div className="flex h-screen overflow-hidden bg-background font-sans">
@@ -97,6 +146,8 @@ function AppShell() {
 
                   {/* ── Chat ── */}
                   <Route path="/chat" element={<ChatPage requestedSessionId={chatSessionRequest.sessionId} requestNonce={chatSessionRequest.nonce} />} />
+                  <Route path="/companions" element={<CompanionsPage />} />
+                  <Route path="/pawrtal" element={<Navigate to="/companions" replace />} />
 
                   {/* ── Workspaces (Templates, Workspaces, Kanban) ── */}
                   <Route path="/templates" element={<TemplatesPage />} />
@@ -138,6 +189,7 @@ function AppShell() {
           </Suspense>
         </div>
       </main>
+      <DetachedShizukuOverlay />
     </div>
   );
 }

@@ -8,13 +8,7 @@ import path from 'path';
 import { execFile as execFileCb } from 'child_process';
 import { promisify } from 'util';
 import axios from 'axios';
-import {
-  normalizeKokoroConfig,
-  sanitizeTextForSpeech,
-  detectSpeechLanguageMode,
-  buildSpeechSynthesisPlan,
-  concatenateWavBuffers
-} from './kokoro-tts.mjs';
+
 
 const execFileAsync = promisify(execFileCb);
 
@@ -54,7 +48,7 @@ function mimeTypeToExtension(mimeType) {
  */
 async function getVoiceConfig(hermes, runtimeFilesService) {
   const config = await runtimeFilesService.readYamlConfig(hermes).catch(() => ({}));
-  const ttsProvider = String(config?.tts?.provider || 'kokoro').trim() || 'kokoro';
+  const ttsProvider = String(config?.tts?.provider || 'neutts-server').trim() || 'neutts-server';
   const neuttsServerConfig = config?.tts?.neutts_server || config?.tts?.neuttsServer || {};
 
   return {
@@ -62,7 +56,6 @@ async function getVoiceConfig(hermes, runtimeFilesService) {
     think: config?.model?.think ?? 'low',
     provider: ttsProvider,
     sttModel: config?.stt?.local?.model || 'base',
-    kokoro: normalizeKokoroConfig(config?.tts),
     neuttsServer: {
       base_url: String(
         neuttsServerConfig?.base_url
@@ -136,86 +129,10 @@ async function transcribeAudioFile(hermes, inputPath, model, voiceScriptPath) {
 }
 
 /**
- * Synthesize speech via Kokoro TTS.
+ * Synthesize speech via the configured TTS provider.
  */
 async function synthesizeSpeech(hermes, text, voiceConfig) {
-  if (String(voiceConfig?.provider || '').toLowerCase() === 'neutts-server') {
-    return synthesizeSpeechWithNeuTtsServer(hermes, text, voiceConfig);
-  }
-
-  const plan = buildSpeechSynthesisPlan(text, voiceConfig.kokoro);
-  if (!plan.shapedText || plan.segments.length === 0) {
-    throw new Error('No speakable text available');
-  }
-
-  await ensureVoiceDir(hermes);
-  const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  const runtimeConfig = voiceConfig.kokoro.runtime;
-  const concatConfig = voiceConfig.kokoro.concatenation;
-  const baseUrl = String(runtimeConfig.base_url || '').trim().replace(/\/$/, '');
-  if (!baseUrl) {
-    throw new Error('Kokoro base URL is missing. Set tts.kokoro.base_url in config.yaml.');
-  }
-
-  const segmentBuffers = [];
-  for (const segment of plan.segments) {
-    const payload = {
-      model: runtimeConfig.model || 'kokoro',
-      input: segment.text,
-      voice: segment.voice,
-      response_format: 'wav',
-      speed: runtimeConfig.speed ?? 1,
-      stream: false,
-      normalization_options: {
-        normalize: runtimeConfig.normalize !== false,
-      },
-    };
-    if (runtimeConfig.lang_code) payload.lang_code = runtimeConfig.lang_code;
-    if (runtimeConfig.volume_multiplier && runtimeConfig.volume_multiplier !== 1) {
-      payload.volume_multiplier = runtimeConfig.volume_multiplier;
-    }
-
-    const response = await axios.post(`${baseUrl}/v1/audio/speech`, payload, {
-      headers: { 'Content-Type': 'application/json' },
-      responseType: 'arraybuffer',
-      timeout: 180000,
-    });
-
-    const audioBuffer = Buffer.from(response?.data || []);
-    if (!audioBuffer.length) {
-      throw new Error(`Kokoro returned an empty audio response for segment "${segment.text.slice(0, 48)}"`);
-    }
-    segmentBuffers.push(audioBuffer);
-  }
-
-  const wavBuffer = segmentBuffers.length === 1
-    ? segmentBuffers[0]
-    : concatenateWavBuffers(segmentBuffers, {
-      gap_ms: concatConfig.gap_ms,
-      trim_segment_edges: concatConfig.trim_segment_edges,
-    });
-
-  const wavFileName = `${id}_kokoro.wav`;
-  const wavOutputPath = path.join(hermes.paths.voice, wavFileName);
-  await fs.promises.writeFile(wavOutputPath, wavBuffer);
-
-  const responseFormat = ['wav', 'mp3', 'opus', 'flac'].includes(runtimeConfig.response_format)
-    ? runtimeConfig.response_format
-    : 'wav';
-  let fileName = wavFileName;
-  if (responseFormat !== 'wav') {
-    fileName = `${id}_kokoro.${responseFormat}`;
-    const outputPath = path.join(hermes.paths.voice, fileName);
-    await transcodeAudioWithFfmpeg(wavOutputPath, outputPath);
-    fs.promises.unlink(wavOutputPath).catch(() => {});
-  }
-
-  return {
-    audioUrl: `/api/voice/audio/${fileName}?profile=${encodeURIComponent(String(hermes.profile || 'default'))}`,
-    fileName,
-    voice: `kokoro:${plan.segments.map(segment => segment.voice).join('|')}`,
-    text: plan.shapedText,
-  };
+  return synthesizeSpeechWithNeuTtsServer(hermes, text, voiceConfig);
 }
 
 /**
@@ -469,6 +386,169 @@ async function ensureVoiceDir(hermes) {
   await fs.promises.mkdir(hermes.paths.voice, { recursive: true });
 }
 
+// ── Shared Text/Audio Utilities (formerly from kokoro-tts.mjs) ──
+
+/**
+ * Sanitize text for TTS — strip markdown, code fences, links, and emoji.
+ */
+function sanitizeTextForSpeech(text) {
+  return String(text || '')
+    .replace(/```[\s\S]*?```/g, ' code omitted. ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, ' ')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/(^|[\s([{\-])(\*{1,3}|_{1,3}|~{2})([^*_~\n]+?)\2(?=$|[\s)\]}.!?,;:…-])/g, '$1$3')
+    .replace(/(^|\n)\s*(?:\d{1,3}[.)-]\s+|[-*+•]\s+)/g, '$1')
+    .replace(/([.!?…:;])\s+\d{1,3}[.)-]\s+/g, '$1 ')
+    .replace(/(^|\n)\s*[-*_]{3,}\s*(?=\n|$)/g, '$1')
+    .replace(/<think>[\s\S]*?<\/think>/gi, ' ')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/[ \t]*\n[ \t]*/g, ' ')
+    .replace(/\s*([:;,.!?…])\s*/g, '$1 ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 4000);
+}
+
+/**
+ * Concatenate WAV buffers into a single WAV, with optional gap between segments and edge trimming.
+ */
+function concatenateWavBuffers(buffers, options = {}) {
+  if (!Array.isArray(buffers) || buffers.length === 0) {
+    throw new Error('No WAV buffers provided for concatenation.');
+  }
+
+  const parsed = buffers.map(buffer => parseWavBuffer(buffer));
+  const reference = parsed[0];
+  const gapMs = clampInteger(options.gap_ms ?? options.gapMs, 0, 0, 2000);
+  const trimEdges = options.trim_segment_edges ?? options.trimSegmentEdges ?? false;
+
+  const parts = [];
+  for (let index = 0; index < parsed.length; index += 1) {
+    const item = parsed[index];
+    if (
+      item.audioFormat !== reference.audioFormat
+      || item.channels !== reference.channels
+      || item.sampleRate !== reference.sampleRate
+      || item.bitsPerSample !== reference.bitsPerSample
+    ) {
+      throw new Error('TTS returned incompatible WAV segments.');
+    }
+
+    const data = trimEdges ? trimWavPcmData(item) : item.data;
+    parts.push(data);
+    if (gapMs > 0 && index < parsed.length - 1) {
+      parts.push(createSilenceData(reference, gapMs));
+    }
+  }
+
+  return buildWavBuffer(reference, Buffer.concat(parts));
+}
+
+function clampNumber(value, fallback, min, max) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function clampInteger(value, fallback, min, max) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function parseWavBuffer(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 44) {
+    throw new Error('Invalid WAV buffer.');
+  }
+  if (buffer.toString('ascii', 0, 4) !== 'RIFF' || buffer.toString('ascii', 8, 12) !== 'WAVE') {
+    throw new Error('Unsupported WAV container.');
+  }
+
+  let offset = 12;
+  let fmt = null;
+  let data = null;
+  while (offset + 8 <= buffer.length) {
+    const chunkId = buffer.toString('ascii', offset, offset + 4);
+    const chunkSize = buffer.readUInt32LE(offset + 4);
+    const chunkStart = offset + 8;
+    const chunkEnd = chunkStart + chunkSize;
+    if (chunkId === 'fmt ') {
+      fmt = {
+        audioFormat: buffer.readUInt16LE(chunkStart),
+        channels: buffer.readUInt16LE(chunkStart + 2),
+        sampleRate: buffer.readUInt32LE(chunkStart + 4),
+        byteRate: buffer.readUInt32LE(chunkStart + 8),
+        blockAlign: buffer.readUInt16LE(chunkStart + 12),
+        bitsPerSample: buffer.readUInt16LE(chunkStart + 14),
+      };
+    } else if (chunkId === 'data') {
+      data = buffer.subarray(chunkStart, chunkEnd);
+    }
+    offset = chunkEnd + (chunkSize % 2);
+  }
+
+  if (!fmt || !data) {
+    throw new Error('WAV file is missing required chunks.');
+  }
+
+  return {
+    ...fmt,
+    data,
+  };
+}
+
+function trimWavPcmData(parsed) {
+  if (parsed.audioFormat !== 1 || parsed.bitsPerSample !== 16) {
+    return parsed.data;
+  }
+
+  const sampleCount = parsed.data.length / 2;
+  let startSample = 0;
+  let endSample = sampleCount - 1;
+  const threshold = 256;
+
+  while (startSample < sampleCount) {
+    if (Math.abs(parsed.data.readInt16LE(startSample * 2)) > threshold) break;
+    startSample += 1;
+  }
+
+  while (endSample > startSample) {
+    if (Math.abs(parsed.data.readInt16LE(endSample * 2)) > threshold) break;
+    endSample -= 1;
+  }
+
+  const start = Math.max(0, startSample * 2);
+  const end = Math.min(parsed.data.length, (endSample + 1) * 2);
+  return end > start ? parsed.data.subarray(start, end) : parsed.data;
+}
+
+function createSilenceData(parsed, gapMs) {
+  const bytesPerSample = parsed.bitsPerSample / 8;
+  const frameSize = parsed.channels * bytesPerSample;
+  const frames = Math.max(0, Math.round((parsed.sampleRate * gapMs) / 1000));
+  return Buffer.alloc(frames * frameSize);
+}
+
+function buildWavBuffer(parsed, dataBuffer) {
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0, 4, 'ascii');
+  header.writeUInt32LE(36 + dataBuffer.length, 4);
+  header.write('WAVE', 8, 4, 'ascii');
+  header.write('fmt ', 12, 4, 'ascii');
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(parsed.audioFormat, 20);
+  header.writeUInt16LE(parsed.channels, 22);
+  header.writeUInt32LE(parsed.sampleRate, 24);
+  header.writeUInt32LE(parsed.sampleRate * parsed.channels * (parsed.bitsPerSample / 8), 28);
+  header.writeUInt16LE(parsed.channels * (parsed.bitsPerSample / 8), 32);
+  header.writeUInt16LE(parsed.bitsPerSample, 34);
+  header.write('data', 36, 4, 'ascii');
+  header.writeUInt32LE(dataBuffer.length, 40);
+  return Buffer.concat([header, dataBuffer]);
+}
+
 export {
   parseAudioDataUrl,
   mimeTypeToExtension,
@@ -480,6 +560,8 @@ export {
   synthesizeSpeechWithNeuTtsServer,
   synthesizeSpeechSegments,
   transcodeAudioWithFfmpeg,
+  sanitizeTextForSpeech,
+  concatenateWavBuffers,
   extractAssistantText,
   ensureVoiceDir,
 };

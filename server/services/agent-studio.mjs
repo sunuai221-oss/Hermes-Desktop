@@ -210,6 +210,7 @@ function normalizeWorkspace(input, existing = null) {
     id: cleanString(existing?.id || input?.id) || generatedId('workspace'),
     name,
     ...(optionalString(input?.description) ? { description: optionalString(input.description) } : {}),
+    ...(optionalString(input?.pipelineBrief) ? { pipelineBrief: optionalString(input.pipelineBrief) } : {}),
     sharedContext: cleanString(input?.sharedContext),
     commonRules: cleanString(input?.commonRules),
     defaultMode: VALID_MODES.has(input?.defaultMode) ? input.defaultMode : 'prompt',
@@ -302,6 +303,7 @@ function buildWorkspacePrompt(workspace, agentsById, options = {}) {
   ];
 
   appendSection(lines, 'Description', workspace.description);
+  appendSection(lines, 'Pipeline Brief', workspace.pipelineBrief);
   appendSection(lines, 'Shared Context', workspace.sharedContext);
   appendSection(lines, 'Common Rules', workspace.commonRules);
   appendSection(lines, 'Current Task', options.task);
@@ -373,6 +375,174 @@ function buildProfileNodePrompt(workspace, node, agent, agentsById, options = {}
   if (agent?.soul) appendSection(lines, 'Agent Identity', agent.soul);
   lines.push('## Task', '', options.task || 'Execute your part of this workspace and return a concise result for the orchestrator.', '');
   return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function buildWorkspaceAutoConfigPrompt(workspace, agentsById, pipelineBrief) {
+  const lines = [
+    `# Workspace Auto-Config Planner: ${workspace.name}`,
+    '',
+    'You are configuring a multi-agent workspace from a user pipeline brief.',
+    `Pipeline brief: ${pipelineBrief}`,
+    '',
+    'Constraints:',
+    '- Use only existing node ids listed below.',
+    '- Use only roles: orchestrator, worker, reviewer, qa, observer.',
+    '- Use only relation kinds: handoff, review, qa, broadcast, escalation.',
+    '- Use only execution modes: prompt, delegate, profiles.',
+    '- Keep suggestions concise and practical.',
+    '- Return strict JSON only (no markdown fences, no commentary).',
+    '',
+    'JSON schema:',
+    '{',
+    '  "summary": "short summary",',
+    '  "workspacePatch": {',
+    '    "description": "optional",',
+    '    "pipelineBrief": "optional",',
+    '    "sharedContext": "optional",',
+    '    "commonRules": "optional",',
+    '    "defaultMode": "prompt|delegate|profiles"',
+    '  },',
+    '  "nodes": [',
+    '    {',
+    '      "nodeId": "required existing node id",',
+    '      "role": "optional role",',
+    '      "label": "optional label",',
+    '      "profileName": "optional profile name",',
+    '      "modelOverride": "optional model",',
+    '      "skills": ["optional", "skills"],',
+    '      "toolsets": ["optional", "toolsets"]',
+    '    }',
+    '  ],',
+    '  "edges": [',
+    '    {',
+    '      "fromNodeId": "required existing node id",',
+    '      "toNodeId": "required existing node id",',
+    '      "kind": "handoff|review|qa|broadcast|escalation",',
+    '      "template": "optional short instruction"',
+    '    }',
+    '  ]',
+    '}',
+    '',
+    'Current workspace snapshot:',
+    '',
+    `- Description: ${workspace.description || '(empty)'}`,
+    `- Shared Context: ${workspace.sharedContext || '(empty)'}`,
+    `- Common Rules: ${workspace.commonRules || '(empty)'}`,
+    `- Default Mode: ${workspace.defaultMode || 'prompt'}`,
+    '',
+    'Nodes:',
+  ];
+
+  for (const node of workspace.nodes || []) {
+    const agent = agentsById.get(node.agentId);
+    lines.push(
+      `- id=${node.id}; label=${getNodeLabel(node, agentsById)}; role=${node.role}; agentId=${node.agentId}; agentName=${agent?.name || 'missing'}`,
+    );
+    if (node.skills?.length) lines.push(`  skills=${node.skills.join(', ')}`);
+    if (node.toolsets?.length) lines.push(`  toolsets=${node.toolsets.join(', ')}`);
+    if (node.modelOverride) lines.push(`  model=${node.modelOverride}`);
+  }
+
+  if ((workspace.edges || []).length > 0) {
+    lines.push('', 'Existing edges:');
+    for (const edge of workspace.edges) {
+      lines.push(`- ${edge.fromNodeId} -> ${edge.toNodeId} (${edge.kind})`);
+    }
+  }
+
+  return lines.join('\n').trim();
+}
+
+function extractJsonCandidate(text) {
+  const content = cleanString(text);
+  if (!content) return '';
+
+  const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) return cleanString(fenced[1]);
+
+  const first = content.indexOf('{');
+  const last = content.lastIndexOf('}');
+  if (first === -1 || last === -1 || last <= first) return '';
+  return content.slice(first, last + 1);
+}
+
+function normalizeAutoConfigWorkspacePatch(input, pipelineBrief) {
+  const workspacePatch = {};
+  const description = optionalString(input?.description);
+  const sharedContext = optionalString(input?.sharedContext);
+  const commonRules = optionalString(input?.commonRules);
+  const suggestedBrief = optionalString(input?.pipelineBrief);
+
+  if (description) workspacePatch.description = description;
+  if (sharedContext) workspacePatch.sharedContext = sharedContext;
+  if (commonRules) workspacePatch.commonRules = commonRules;
+  if (VALID_MODES.has(input?.defaultMode)) workspacePatch.defaultMode = input.defaultMode;
+  workspacePatch.pipelineBrief = suggestedBrief || pipelineBrief;
+  return workspacePatch;
+}
+
+function normalizeAutoConfigNodePatches(input, workspace) {
+  const validNodeIds = new Set((workspace.nodes || []).map(node => node.id));
+  const nodePatches = [];
+  const seen = new Set();
+
+  for (const entry of Array.isArray(input) ? input : []) {
+    const nodeId = cleanString(entry?.nodeId || entry?.id);
+    if (!nodeId || !validNodeIds.has(nodeId) || seen.has(nodeId)) continue;
+
+    const patch = { nodeId };
+    if (VALID_ROLES.has(entry?.role)) patch.role = entry.role;
+    if (optionalString(entry?.label)) patch.label = optionalString(entry.label);
+    if (optionalString(entry?.profileName)) patch.profileName = optionalString(entry.profileName);
+    if (optionalString(entry?.modelOverride)) patch.modelOverride = optionalString(entry.modelOverride);
+    if (Object.prototype.hasOwnProperty.call(entry || {}, 'skills')) patch.skills = asStringArray(entry?.skills);
+    if (Object.prototype.hasOwnProperty.call(entry || {}, 'toolsets')) patch.toolsets = asStringArray(entry?.toolsets);
+
+    nodePatches.push(patch);
+    seen.add(nodeId);
+  }
+
+  return nodePatches;
+}
+
+function normalizeAutoConfigEdges(input, workspace) {
+  const validNodeIds = new Set((workspace.nodes || []).map(node => node.id));
+  const edges = [];
+  const seen = new Set();
+
+  for (const entry of Array.isArray(input) ? input : []) {
+    const fromNodeId = cleanString(entry?.fromNodeId || entry?.from);
+    const toNodeId = cleanString(entry?.toNodeId || entry?.to);
+    if (!fromNodeId || !toNodeId || fromNodeId === toNodeId) continue;
+    if (!validNodeIds.has(fromNodeId) || !validNodeIds.has(toNodeId)) continue;
+
+    const kind = VALID_EDGE_KINDS.has(entry?.kind) ? entry.kind : 'handoff';
+    const dedupeKey = `${fromNodeId}::${toNodeId}::${kind}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+
+    edges.push({
+      fromNodeId,
+      toNodeId,
+      kind,
+      ...(optionalString(entry?.template) ? { template: optionalString(entry.template) } : {}),
+    });
+  }
+
+  return edges;
+}
+
+function normalizeAutoConfigSuggestion(input, workspace, pipelineBrief) {
+  const source = (input && typeof input === 'object' && input.suggestion && typeof input.suggestion === 'object')
+    ? input.suggestion
+    : input;
+  const summary = optionalString(source?.summary) || 'Auto-configuration generated from pipeline brief.';
+  return {
+    summary,
+    workspacePatch: normalizeAutoConfigWorkspacePatch(source?.workspacePatch || {}, pipelineBrief),
+    nodes: normalizeAutoConfigNodePatches(source?.nodes, workspace),
+    edges: normalizeAutoConfigEdges(source?.edges, workspace),
+  };
 }
 
 export function createAgentStudioService({
@@ -877,6 +1047,43 @@ export function createAgentStudioService({
     return { prompt: buildWorkspacePrompt(workspace, agentsById) };
   }
 
+  async function previewWorkspaceAutoConfig(hermes, id, payload = {}, runners = {}) {
+    const { workspace, agentsById } = await getWorkspaceExecutionContext(hermes, id);
+    const pipelineBrief = cleanString(payload?.pipelineBrief || workspace.pipelineBrief);
+    if (!pipelineBrief) throw createHttpError(400, 'Pipeline brief is required');
+    if (!runners.postGatewayChatCompletion) {
+      throw createHttpError(501, 'Workspace auto-config bridge is not configured');
+    }
+
+    const prompt = buildWorkspaceAutoConfigPrompt(workspace, agentsById, pipelineBrief);
+    const response = await runners.postGatewayChatCompletion(hermes, {
+      ...(payload?.model ? { model: cleanString(payload.model) } : {}),
+      source: 'agent-studio-auto-config',
+      session_title: `Workspace Auto Config: ${workspace.name}`,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const raw = extractAssistantContent(response);
+    const jsonCandidate = extractJsonCandidate(raw);
+    if (!jsonCandidate) throw createHttpError(502, 'Auto-config response did not include valid JSON');
+
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonCandidate);
+    } catch {
+      throw createHttpError(502, 'Auto-config response JSON could not be parsed');
+    }
+
+    return {
+      success: true,
+      workspaceId: workspace.id,
+      pipelineBrief,
+      prompt,
+      suggestion: normalizeAutoConfigSuggestion(parsed, workspace, pipelineBrief),
+      raw,
+    };
+  }
+
   async function runWorkspaceWithGateway(hermes, workspace, agentsById, payload = {}, runners = {}, { executePromptMode = false } = {}) {
     const mode = VALID_MODES.has(payload?.mode) ? payload.mode : workspace.defaultMode;
     const task = cleanString(payload?.task);
@@ -985,6 +1192,7 @@ export function createAgentStudioService({
     updateWorkspace,
     deleteWorkspace,
     generateWorkspacePrompt,
+    previewWorkspaceAutoConfig,
     executeWorkspace,
     chatWorkspace,
   };

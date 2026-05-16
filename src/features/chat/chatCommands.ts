@@ -1,6 +1,6 @@
 import type { ChatUsage } from '../../types';
 
-export type ChatCommandId = 'new' | 'usage' | 'status' | 'compact' | 'tools' | 'memory' | 'model';
+export type ChatCommandId = 'new' | 'usage' | 'status' | 'pawrtal' | 'compact' | 'tools' | 'memory' | 'model';
 
 export interface ChatCommandDefinition {
   id: ChatCommandId;
@@ -13,6 +13,7 @@ export const CHAT_COMMANDS: ChatCommandDefinition[] = [
   { id: 'new', command: '/new', description: 'Start a fresh chat session', localOnly: true },
   { id: 'usage', command: '/usage', description: 'Show latest token, cost, and limit usage', localOnly: true },
   { id: 'status', command: '/status', description: 'Show backend, gateway, profile, and model status', localOnly: true },
+  { id: 'pawrtal', command: '/pawrtal', description: 'Control Pawrtal companion (spawn, hide, switch, reset)', localOnly: true },
   { id: 'compact', command: '/compact', description: 'Ask Hermes runtime to compact the session context', localOnly: false },
   { id: 'tools', command: '/tools', description: 'Ask Hermes runtime to inspect enabled tools', localOnly: false },
   { id: 'memory', command: '/memory', description: 'Ask Hermes runtime to inspect memory state', localOnly: false },
@@ -29,7 +30,7 @@ export function parseCommandInput(input: string): { id: ChatCommandId; command: 
 }
 
 export function isLocalCommand(commandId: ChatCommandId): boolean {
-  return commandId === 'new' || commandId === 'usage' || commandId === 'status';
+  return commandId === 'new' || commandId === 'usage' || commandId === 'status' || commandId === 'pawrtal';
 }
 
 function formatIntegerMetric(value: number | null | undefined): string {

@@ -1,5 +1,6 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
+import * as apiClient from '../api';
 import { useProfiles } from '../contexts/ProfileContext';
 import { useGatewayContext } from '../contexts/GatewayContext';
 import type { ContextReferenceAttachment } from '../types';
@@ -58,11 +59,26 @@ export function useChat({
   const preferredThink = gateway.config?.model?.think ?? 'low';
   const runtimeProvider = getRuntimeProviderKey(gateway.config);
   const runtimeProviderLabel = getRuntimeProviderLabel(gateway.config);
+  const pawrtalConfig = gateway.config?.pawrtal as {
+    auto_start?: boolean;
+    default_pet_id?: string;
+    default_session?: string;
+    reset_before_spawn?: boolean;
+  } | undefined;
+  const pawrtalAutoStartEnabled = pawrtalConfig?.auto_start === true;
+  const pawrtalDefaultPetId = typeof pawrtalConfig?.default_pet_id === 'string'
+    ? pawrtalConfig.default_pet_id.trim()
+    : '';
+  const pawrtalDefaultSession = typeof pawrtalConfig?.default_session === 'string'
+    ? pawrtalConfig.default_session.trim() || 'current'
+    : 'current';
+  const pawrtalResetBeforeSpawn = pawrtalConfig?.reset_before_spawn !== false;
   const sessionStorageKey = getChatSessionStorageKey(currentProfile);
   const contextWindowTokens = getModelContextWindow(
     gateway.config as { model?: Record<string, unknown> } | null,
     preferredModel,
   );
+  const pawrtalAutoStartRef = useRef<string | null>(null);
 
   // ── Local state ───────────────────────────────────────────
   const [input, setInput] = useState('');
@@ -181,6 +197,37 @@ export function useChat({
     preferredModel, runtimeProviderLabel, usage,
     handleNewChat, setMessages,
   });
+
+  useEffect(() => {
+    if (!pawrtalAutoStartEnabled) {
+      pawrtalAutoStartRef.current = null;
+      return;
+    }
+    if (gateway.builderStatus !== 'online') return;
+    const autoStartKey = [
+      currentProfile,
+      activeSessionId || 'none',
+      pawrtalDefaultPetId || '-',
+      pawrtalDefaultSession,
+      pawrtalResetBeforeSpawn ? 'reset' : 'spawn',
+    ].join(':');
+    if (pawrtalAutoStartRef.current === autoStartKey) return;
+    pawrtalAutoStartRef.current = autoStartKey;
+
+    apiClient.pawrtal.autostart({
+      petId: pawrtalDefaultPetId || null,
+      session: pawrtalDefaultSession,
+      resetBeforeSpawn: pawrtalResetBeforeSpawn,
+    }).catch(() => {});
+  }, [
+    activeSessionId,
+    currentProfile,
+    gateway.builderStatus,
+    pawrtalAutoStartEnabled,
+    pawrtalDefaultPetId,
+    pawrtalDefaultSession,
+    pawrtalResetBeforeSpawn,
+  ]);
 
   // ── Audio & Messages ──────────────────────────────────────
   const {

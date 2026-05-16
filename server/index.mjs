@@ -49,6 +49,8 @@ import { registerKanbanRoutes } from './routes/kanban.mjs';
 import { registerMediaRoutes } from './routes/media.mjs';
 import { registerModelRoutes } from './routes/models.mjs';
 import { registerPluginRoutes } from './routes/plugins.mjs';
+import { registerPawrtalRoutes } from './routes/pawrtal.mjs';
+import { registerLive2dRoutes } from './routes/live2d.mjs';
 import { registerProfileRoutes } from './routes/profiles.mjs';
 import { registerSessionRoutes } from './routes/sessions.mjs';
 import { registerSkillRoutes } from './routes/skills.mjs';
@@ -62,12 +64,7 @@ import {
   normalizeChatProvider,
 } from './services/provider-catalog.mjs';
 import { createPluginsService } from './services/plugins.mjs';
-import {
-  buildSpeechSynthesisPlan,
-  concatenateWavBuffers,
-  normalizeKokoroConfig,
-  sanitizeTextForSpeech,
-} from './services/kokoro-tts.mjs';
+import { createPawrtalService } from './services/pawrtal.mjs';
 import { createRuntimeFilesService } from './services/runtime-files.mjs';
 import { createStateDbManager } from './services/state-db.mjs';
 import { createSkillsService } from './services/skills.mjs';
@@ -129,6 +126,7 @@ import {
   synthesizeSpeech,
   synthesizeSpeechSegments,
   transcodeAudioWithFfmpeg,
+  sanitizeTextForSpeech,
   extractAssistantText,
 } from './services/voice.mjs';
 
@@ -187,6 +185,10 @@ const pluginsService = createPluginsService({
   yaml,
   readConfigForSkills: skillsService.readConfigForSkills,
   workspaceRoot: WORKSPACE_ROOT,
+});
+const pawrtalService = createPawrtalService({
+  fs,
+  execFileAsync,
 });
 const cronJobsService = createCronJobsService({ fs, path });
 const getDesktopProviderRequestConfig = (hermes, body = {}) => getProviderRequestConfig(hermes, body, yaml, OLLAMA_BASE_URL);
@@ -431,6 +433,8 @@ registerModelRoutes({ app, fetchProviderModels });
 registerSkillRoutes({ app, skillsService });
 registerHookRoutes({ app, skillsService });
 registerPluginRoutes({ app, pluginsService });
+registerPawrtalRoutes({ app, pawrtalService });
+registerLive2dRoutes({ app, fs, expressStatic: express.static, hermesBase: HERMES_BASE });
 registerCronJobRoutes({ app, cronJobsService });
 
 // ── Frontend ────────────────────────────────────────────────────────

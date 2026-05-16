@@ -447,6 +447,7 @@ test('workspace CRUD persists nodes, roles, positions, and shared context', asyn
   await withHermesFiles(async hermes => {
     const created = await agentStudioService.createWorkspace(hermes, {
       name: 'Launch Team',
+      pipelineBrief: 'Planner leads backend then frontend then QA.',
       sharedContext: 'Ship the feature',
       commonRules: 'Keep evidence',
       nodes: [{
@@ -477,6 +478,7 @@ test('workspace CRUD persists nodes, roles, positions, and shared context', asyn
     assert.equal(updated.workspace.nodes[0].role, 'qa');
     assert.deepEqual(updated.workspace.nodes[0].position, { x: 200, y: 140 });
     assert.equal(updated.workspace.edges[0].kind, 'review');
+    assert.equal(store.workspaces[0].pipelineBrief, 'Planner leads backend then frontend then QA.');
     assert.equal(store.workspaces[0].sharedContext, 'Ship the feature');
 
     await agentStudioService.deleteWorkspace(hermes, created.workspace.id);
@@ -527,6 +529,77 @@ test('workspace prompt includes context, roles, agents, souls, and missing defin
     assert.match(result.prompt, /Primary Reviewer -> Missing agent definition \(qa\)/);
     assert.match(result.prompt, /# Reviewer Soul/);
     assert.match(result.prompt, /Missing agent definition for missing-agent/);
+  });
+});
+
+test('workspace auto-config preview normalizes model output into safe workspace patches', async () => {
+  await withHermesFiles(async hermes => {
+    const planner = await agentStudioService.createAgent(hermes, {
+      name: 'Planner',
+      soul: '# Planner Soul',
+    });
+    const implementer = await agentStudioService.createAgent(hermes, {
+      name: 'Implementer',
+      soul: '# Implementer Soul',
+    });
+    const workspace = await agentStudioService.createWorkspace(hermes, {
+      name: 'Auto Config Workspace',
+      nodes: [
+        { id: 'node-planner', agentId: planner.agent.id, role: 'worker', position: { x: 10, y: 20 } },
+        { id: 'node-implementer', agentId: implementer.agent.id, role: 'worker', position: { x: 260, y: 20 } },
+      ],
+    });
+
+    const preview = await agentStudioService.previewWorkspaceAutoConfig(hermes, workspace.workspace.id, {
+      pipelineBrief: 'Planner orchestrates, implementer builds, then review and QA.',
+    }, {
+      postGatewayChatCompletion: async () => ({
+        choices: [{
+          message: {
+            content: [
+              '```json',
+              JSON.stringify({
+                summary: 'Generated pipeline config',
+                workspacePatch: {
+                  defaultMode: 'delegate',
+                  sharedContext: 'Deliver the feature with high confidence.',
+                  commonRules: 'Escalate blockers quickly.',
+                },
+                nodes: [
+                  { nodeId: 'node-planner', role: 'orchestrator', skills: ['planning', 'synthesis'] },
+                  { nodeId: 'node-implementer', role: 'worker', toolsets: ['terminal', 'git'] },
+                  { nodeId: 'node-missing', role: 'qa' },
+                ],
+                edges: [
+                  { fromNodeId: 'node-planner', toNodeId: 'node-implementer', kind: 'handoff' },
+                  { fromNodeId: 'node-planner', toNodeId: 'node-implementer', kind: 'handoff' },
+                  { fromNodeId: 'node-implementer', toNodeId: 'node-planner', kind: 'review' },
+                  { fromNodeId: 'node-implementer', toNodeId: 'node-ghost', kind: 'qa' },
+                  { fromNodeId: 'node-planner', toNodeId: 'node-planner', kind: 'broadcast' },
+                ],
+              }, null, 2),
+              '```',
+            ].join('\n'),
+          },
+        }],
+      }),
+    });
+
+    assert.equal(preview.success, true);
+    assert.equal(preview.workspaceId, workspace.workspace.id);
+    assert.equal(preview.suggestion.workspacePatch.defaultMode, 'delegate');
+    assert.equal(preview.suggestion.nodes.length, 2);
+    assert.equal(preview.suggestion.nodes[0].nodeId, 'node-planner');
+    assert.equal(preview.suggestion.nodes[0].role, 'orchestrator');
+    assert.deepEqual(preview.suggestion.nodes[1].toolsets, ['terminal', 'git']);
+    assert.deepEqual(preview.suggestion.nodes.map(node => node.nodeId), ['node-planner', 'node-implementer']);
+    assert.equal(preview.suggestion.edges.length, 2);
+    assert.equal(preview.suggestion.edges[0].fromNodeId, 'node-planner');
+    assert.equal(preview.suggestion.edges[0].kind, 'handoff');
+    assert.deepEqual(
+      preview.suggestion.edges.map(edge => `${edge.fromNodeId}->${edge.toNodeId}:${edge.kind}`),
+      ['node-planner->node-implementer:handoff', 'node-implementer->node-planner:review'],
+    );
   });
 });
 

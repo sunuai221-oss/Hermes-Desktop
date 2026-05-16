@@ -15,8 +15,12 @@ import type {
   Message,
   ModelThinkMode,
   OllamaModel,
+  PawrtalCommandResult,
+  PawrtalCompanion,
+  PawrtalStatusResponse,
   VoiceChatResponse,
   VoiceSynthesisResponse,
+  WorkspaceAutoConfigPreviewResult,
 } from './types';
 import { getActiveProfileName } from './features/chat/chatStorage';
 
@@ -60,6 +64,11 @@ type PreferredSkillsUpdate = {
 type WorkspaceChatPayload = {
   task: string;
   mode?: AgentWorkspace['defaultMode'];
+  model?: string;
+};
+
+type WorkspaceAutoConfigPayload = {
+  pipelineBrief: string;
   model?: string;
 };
 
@@ -206,6 +215,8 @@ export const agentStudio = {
     scanHttp.post<AgentWorkspaceExecutionResult>(`/api/agent-studio/workspaces/${encodeURIComponent(id)}/execute`, mode ? { mode } : {}),
   chatWorkspace: (id: string, payload: WorkspaceChatPayload) =>
     scanHttp.post<AgentWorkspaceExecutionResult>(`/api/agent-studio/workspaces/${encodeURIComponent(id)}/chat`, payload),
+  autoConfigWorkspace: (id: string, payload: WorkspaceAutoConfigPayload) =>
+    scanHttp.post<WorkspaceAutoConfigPreviewResult>(`/api/agent-studio/workspaces/${encodeURIComponent(id)}/auto-config`, payload),
 };
 
 export const memory = {
@@ -225,6 +236,22 @@ export const contextReferences = {
 
 export const plugins = {
   list: () => http.get('/api/plugins'),
+};
+
+export const pawrtal = {
+  list: () => http.get<PawrtalCommandResult & { companions: PawrtalCompanion[] }>('/api/pawrtal/list'),
+  status: (session = 'current') => http.get<PawrtalStatusResponse>('/api/pawrtal/status', { params: { session } }),
+  use: (payload: { petId: string; session?: string }) => http.post<PawrtalCommandResult>('/api/pawrtal/use', payload),
+  spawn: (payload: { petId?: string | null; session?: string }) => http.post<PawrtalCommandResult>('/api/pawrtal/spawn', payload),
+  vanish: (payload: { petId?: string | null; session?: string }) => http.post<PawrtalCommandResult>('/api/pawrtal/vanish', payload),
+  switch: (payload: { petId: string; session?: string }) => http.post<PawrtalCommandResult>('/api/pawrtal/switch', payload),
+  reset: (payload: { petId?: string | null; session?: string }) => http.post<PawrtalCommandResult>('/api/pawrtal/reset', payload),
+  autostart: (payload: { petId?: string | null; session?: string; resetBeforeSpawn?: boolean }) =>
+    http.post<PawrtalCommandResult>('/api/pawrtal/autostart', payload),
+};
+
+export const live2d = {
+  listModels: () => http.get<{ userModels: Array<{ id: string; label: string; description: string; modelUrl: string; modelVersion: string; isUserModel: boolean }> }>('/api/live2d/models'),
 };
 
 export const cronjobs = {

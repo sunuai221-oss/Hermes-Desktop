@@ -159,6 +159,31 @@ Chaque section montre le nombre de templates et permet de filtrer.
 
 ## PARTIE 2 : Workspaces
 
+### Flux actuel implemente
+
+La page **Workspaces** sert aujourd'hui a composer, sauvegarder, generer et tester une orchestration multi-agent.
+
+Flux nominal :
+
+1. **Creation** : `[New workspace]` cree un workspace vide avec nom, description, `Pipeline brief`, contexte partage, regles communes, mode d'execution, nodes et relations.
+2. **Ajout de node** : un template se glisse depuis le panneau **Templates** vers le canvas. Le node cree reprend le nom, le modele, les skills et toolsets preferes du template.
+3. **Edition** : l'inspecteur modifie les champs workspace, les roles de nodes, les overrides modele, les skills/toolsets et les relations entre nodes.
+4. **Save** : `[Save]` persiste le workspace dans le store Agent Studio.
+5. **Generate prompt** : `[Generate prompt]` sauvegarde d'abord le workspace, puis genere le prompt d'orchestration depuis le backend.
+6. **Auto-config preview** : `Preview auto-config` sauvegarde le workspace, envoie le `Pipeline brief` et la topologie courante au backend, puis recoit une suggestion normalisee.
+7. **Preview diff** : la preview affiche localement les changements proposes avant application : champs workspace, mode d'execution, nodes et relations.
+8. **Apply preview** : `Apply preview` applique localement la suggestion aux champs workspace, nodes et relations. Une sauvegarde reste necessaire ensuite pour la persistance.
+9. **Apply & Save** : `Apply & Save` applique le meme plan local et le persiste immediatement, sans refaire d'appel au modele.
+10. **Unsaved changes** : toute modification locale affiche `Unsaved changes` et renforce le bouton `Save changes`.
+11. **Navigation sure** : les changements de workspace, creation, suppression, ouverture de l'interface, navigation hors page et reload demandent confirmation quand le workspace actif n'est pas sauvegarde.
+12. **Interface / Runs** : l'onglet **Interface** permet de chatter avec le workspace, et **Runs** affiche les sorties d'execution.
+
+Contraintes de securite actuelles :
+
+- l'auto-config ne peut utiliser que les node ids deja presents dans le workspace ;
+- les roles, modes et types de relations sont limites a des valeurs connues ;
+- les nodes ou edges inconnus proposes par le modele sont ignores cote backend.
+
 ### Qu'est-ce qu'un Workspace ?
 
 Un Workspace est une **composition multi-agent** : un graphe de nœuds où chaque nœud est un template/agent branché sur un rôle spécifique.

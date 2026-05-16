@@ -37,7 +37,7 @@ interface UseChatMessagesOptions {
   buildUserContent: (base: string) => string;
   clearPendingAttachments: () => void;
   maybeSpeakAssistantReply: (assistantText: string) => Promise<void> | void;
-  handleLocalCommand: (trimmedInput: string) => boolean;
+  handleLocalCommand: (trimmedInput: string) => boolean | Promise<boolean>;
 }
 
 export function useChatMessages({
@@ -75,9 +75,12 @@ export function useChatMessages({
     const hasNoContent = !trimmedInput && attachmentsCount === 0 && imageAttachments.length === 0;
     if (hasNoContent || streaming || uploadingImages || voiceState === 'recording' || voiceState === 'processing') return;
 
-    if (attachmentsCount === 0 && imageAttachments.length === 0 && handleLocalCommand(trimmedInput)) {
-      setInput('');
-      return;
+    if (attachmentsCount === 0 && imageAttachments.length === 0) {
+      const handledLocal = await handleLocalCommand(trimmedInput);
+      if (handledLocal) {
+        setInput('');
+        return;
+      }
     }
 
     const textSeed = trimmedInput || (imageAttachments.length > 0

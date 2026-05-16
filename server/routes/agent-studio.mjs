@@ -102,6 +102,16 @@ export function registerAgentStudioRoutes({ app, agentStudioService, getHermesCo
     }
   });
 
+  app.post('/api/agent-studio/workspaces/:id/auto-config', async (req, res) => {
+    try {
+      res.json(await agentStudioService.previewWorkspaceAutoConfig(req.hermes, req.params.id, req.body || {}, {
+        postGatewayChatCompletion,
+      }));
+    } catch (error) {
+      respondWithRouteError(res, error, 'Could not auto-configure workspace');
+    }
+  });
+
   app.post('/api/agent-studio/workspaces/:id/execute', async (req, res) => {
     try {
       res.json(await agentStudioService.executeWorkspace(req.hermes, req.params.id, req.body || {}, {

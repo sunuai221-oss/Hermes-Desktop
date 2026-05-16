@@ -13,7 +13,6 @@ export function Sidebar({ active, onNavigate, isOpen }: SidebarProps) {
   const { navSections, footerItems } = useNavigation();
   const assetBase = import.meta.env.BASE_URL || '/';
   const wordmarkSrc = `${assetBase}hermes-wordmark.svg`;
-  const heroSrc = `${assetBase}Hermes_anime.jpg`;
 
   return (
     <>
@@ -45,16 +44,6 @@ export function Sidebar({ active, onNavigate, isOpen }: SidebarProps) {
             alt="ἙΡΜΗΣ"
             className="h-12 w-auto max-w-[190px] drop-shadow-[0_4px_18px_rgba(255,180,0,0.18)]"
           />
-          <p className="mt-1 pl-1 text-[11px] text-muted-foreground font-medium tracking-[0.18em] uppercase">
-            Local Cockpit
-          </p>
-          <div className="mt-4 overflow-hidden rounded-2xl border border-border bg-card/70 shadow-sm">
-            <img
-              src={heroSrc}
-              alt="Hermes anime"
-              className="h-24 w-full object-cover object-top"
-            />
-          </div>
         </div>
 
         {/* Profile Switcher — removed, kept in Header */}

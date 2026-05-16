@@ -28,6 +28,7 @@ function createWorkspaceDraft(): Partial<AgentWorkspace> {
   return {
     name: `Workspace ${now.slice(11, 16)}`,
     description: '',
+    pipelineBrief: '',
     sharedContext: '',
     commonRules: '',
     defaultMode: 'prompt',
@@ -71,12 +72,67 @@ function formatError(error: unknown, fallback: string) {
   return fallback;
 }
 
+function cleanComparableString(value: unknown) {
+  return String(value ?? '').trim();
+}
+
+function cleanComparableArray(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.map(item => cleanComparableString(item)).filter(Boolean);
+}
+
+function comparableWorkspace(workspace: AgentWorkspace) {
+  return {
+    id: workspace.id,
+    name: cleanComparableString(workspace.name),
+    description: cleanComparableString(workspace.description),
+    pipelineBrief: cleanComparableString(workspace.pipelineBrief),
+    sharedContext: cleanComparableString(workspace.sharedContext),
+    commonRules: cleanComparableString(workspace.commonRules),
+    defaultMode: workspace.defaultMode,
+    nodes: (workspace.nodes || []).map(node => ({
+      id: node.id,
+      agentId: node.agentId,
+      role: node.role,
+      label: cleanComparableString(node.label),
+      profileName: cleanComparableString(node.profileName),
+      modelOverride: cleanComparableString(node.modelOverride),
+      toolsets: cleanComparableArray(node.toolsets),
+      skills: cleanComparableArray(node.skills),
+      position: {
+        x: Number(node.position?.x) || 0,
+        y: Number(node.position?.y) || 0,
+      },
+    })),
+    edges: (workspace.edges || []).map(edge => ({
+      id: edge.id,
+      fromNodeId: edge.fromNodeId,
+      toNodeId: edge.toNodeId,
+      kind: edge.kind,
+      template: cleanComparableString(edge.template),
+    })),
+  };
+}
+
+function workspaceFingerprint(workspace: AgentWorkspace) {
+  return JSON.stringify(comparableWorkspace(workspace));
+}
+
+function cloneWorkspace(workspace: AgentWorkspace): AgentWorkspace {
+  return JSON.parse(JSON.stringify(workspace)) as AgentWorkspace;
+}
+
+function mapWorkspacesById(workspaces: AgentWorkspace[]) {
+  return Object.fromEntries(workspaces.map(workspace => [workspace.id, cloneWorkspace(workspace)]));
+}
+
 export function useWorkspaceCrud({
   loadTemplates,
   clearLibraryError,
   onWorkspaceContextReset,
 }: UseWorkspaceCrudOptions) {
   const [workspaces, setWorkspaces] = useState<AgentWorkspace[]>([]);
+  const [savedWorkspacesById, setSavedWorkspacesById] = useState<Record<string, AgentWorkspace>>({});
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -93,9 +149,30 @@ export function useWorkspaceCrud({
     [activeWorkspace, selectedNodeId],
   );
 
+  const activeWorkspaceDirty = useMemo(() => {
+    if (!activeWorkspace) return false;
+    const savedWorkspace = savedWorkspacesById[activeWorkspace.id];
+    if (!savedWorkspace) return false;
+    return workspaceFingerprint(activeWorkspace) !== workspaceFingerprint(savedWorkspace);
+  }, [activeWorkspace, savedWorkspacesById]);
+
   const replaceWorkspace = useCallback((workspace: AgentWorkspace) => {
     setWorkspaces(current => current.map(item => (item.id === workspace.id ? workspace : item)));
   }, []);
+
+  const markWorkspaceSaved = useCallback((workspace: AgentWorkspace) => {
+    setSavedWorkspacesById(current => ({
+      ...current,
+      [workspace.id]: cloneWorkspace(workspace),
+    }));
+  }, []);
+
+  const discardActiveWorkspaceChanges = useCallback(() => {
+    if (!activeWorkspace) return;
+    const savedWorkspace = savedWorkspacesById[activeWorkspace.id];
+    if (!savedWorkspace) return;
+    replaceWorkspace(cloneWorkspace(savedWorkspace));
+  }, [activeWorkspace, replaceWorkspace, savedWorkspacesById]);
 
   const patchActiveWorkspace = useCallback((patch: Partial<AgentWorkspace>) => {
     if (!activeWorkspace) return;
@@ -127,6 +204,7 @@ export function useWorkspaceCrud({
       ]);
       const nextWorkspaces = Array.isArray(workspacesRes.data.workspaces) ? workspacesRes.data.workspaces : [];
       setWorkspaces(nextWorkspaces);
+      setSavedWorkspacesById(mapWorkspacesById(nextWorkspaces));
       setActiveWorkspaceId(current => current || nextWorkspaces[0]?.id || null);
       if (!libraryLoad.ok) {
         setError(libraryLoad.error || 'Could not load templates library.');
@@ -144,13 +222,14 @@ export function useWorkspaceCrud({
     try {
       const res = await api.agentStudio.createWorkspace(createWorkspaceDraft());
       setWorkspaces(current => [res.data.workspace, ...current]);
+      markWorkspaceSaved(res.data.workspace);
       setActiveWorkspaceId(res.data.workspace.id);
       setSelectedNodeId(null);
       onWorkspaceContextReset?.();
     } catch (createError) {
       setError(formatError(createError, 'Could not create workspace.'));
     }
-  }, [clearLibraryError, onWorkspaceContextReset]);
+  }, [clearLibraryError, markWorkspaceSaved, onWorkspaceContextReset]);
 
   const saveWorkspace = useCallback(async () => {
     if (!activeWorkspace) return null;
@@ -160,6 +239,7 @@ export function useWorkspaceCrud({
     try {
       const res = await api.agentStudio.updateWorkspace(activeWorkspace.id, activeWorkspace);
       replaceWorkspace(res.data.workspace);
+      markWorkspaceSaved(res.data.workspace);
       return res.data.workspace;
     } catch (saveError) {
       setError(formatError(saveError, 'Could not save workspace.'));
@@ -167,7 +247,24 @@ export function useWorkspaceCrud({
     } finally {
       setSaving(false);
     }
-  }, [activeWorkspace, clearLibraryError, replaceWorkspace]);
+  }, [activeWorkspace, clearLibraryError, markWorkspaceSaved, replaceWorkspace]);
+
+  const saveWorkspaceDraft = useCallback(async (workspace: AgentWorkspace) => {
+    setSaving(true);
+    setError('');
+    clearLibraryError();
+    try {
+      const res = await api.agentStudio.updateWorkspace(workspace.id, workspace);
+      replaceWorkspace(res.data.workspace);
+      markWorkspaceSaved(res.data.workspace);
+      return res.data.workspace;
+    } catch (saveError) {
+      setError(formatError(saveError, 'Could not save workspace.'));
+      return null;
+    } finally {
+      setSaving(false);
+    }
+  }, [clearLibraryError, markWorkspaceSaved, replaceWorkspace]);
 
   const deleteWorkspace = useCallback(async () => {
     if (!activeWorkspace) return;
@@ -177,6 +274,11 @@ export function useWorkspaceCrud({
       await api.agentStudio.deleteWorkspace(activeWorkspace.id);
       const remaining = workspaces.filter(workspace => workspace.id !== activeWorkspace.id);
       setWorkspaces(remaining);
+      setSavedWorkspacesById(current => {
+        const next = { ...current };
+        delete next[activeWorkspace.id];
+        return next;
+      });
       setActiveWorkspaceId(remaining[0]?.id || null);
       setSelectedNodeId(null);
       onWorkspaceContextReset?.();
@@ -216,6 +318,7 @@ export function useWorkspaceCrud({
     event: DragEndEvent,
     agentsById: Map<string, AgentDefinition>,
     canvasRef: MutableRefObject<HTMLDivElement | null>,
+    zoom = 1,
   ) => {
     if (!activeWorkspace) return;
     const data = event.active.data.current as DragData | undefined;
@@ -226,8 +329,8 @@ export function useWorkspaceCrud({
           ? {
               ...node,
               position: {
-                x: Math.max(0, node.position.x + event.delta.x),
-                y: Math.max(0, node.position.y + event.delta.y),
+                x: Math.max(0, node.position.x + event.delta.x / zoom),
+                y: Math.max(0, node.position.y + event.delta.y / zoom),
               },
             }
           : node,
@@ -262,12 +365,15 @@ export function useWorkspaceCrud({
     error,
     setError,
     activeWorkspace,
+    activeWorkspaceDirty,
     selectedNode,
     setSelectedNodeId,
     load,
     selectWorkspace,
     createWorkspace,
     saveWorkspace,
+    saveWorkspaceDraft,
+    discardActiveWorkspaceChanges,
     deleteWorkspace,
     patchActiveWorkspace,
     patchSelectedNode,

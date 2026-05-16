@@ -8,7 +8,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 
 export type NavItem =
-  | 'home' | 'chat' | 'sessions'
+  | 'home' | 'chat' | 'companions' | 'sessions'
   | 'workspaces' | 'templates' | 'kanban'
   | 'identity' | 'config' | 'skills' | 'profiles'
   | 'automations' | 'extensions'
@@ -45,10 +45,11 @@ export const navSections: NavSection[] = [
     items: [
       { id: 'chat',          icon: MessageSquare,   label: 'Chat',           title: 'Chat',           path: '/chat' },
       { id: 'home',          icon: House,           label: 'Home',           title: 'Home',           path: '/home' },
+      { id: 'companions',    icon: Sparkles,        label: 'Companions',     title: 'Companions',     path: '/companions' },
     ],
   },
   {
-    label: 'Workspaces',
+    label: 'Studio',
     items: [
       { id: 'templates',     icon: FileStack,       label: 'Templates',      title: 'Templates',      path: '/templates' },
       { id: 'workspaces',    icon: GitBranchPlus,   label: 'Workspaces',     title: 'Workspaces',     path: '/workspaces' },

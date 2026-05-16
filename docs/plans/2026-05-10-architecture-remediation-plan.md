@@ -68,20 +68,23 @@ Follow-up (next iteration):
 
 ---
 
-## Phase 3 — Voice/Kokoro responsibility contract (MEDIUM)
+## Phase 3 — Voice pipeline consolidation (COMPLETED)
 
-Objective: remove ambiguity between orchestration and text-shaping layers.
+**Status:** Kokoro TTS provider removed. The `server/services/kokoro-tts.mjs` module and its boundary doc were deleted. Shared text sanitization and WAV concatenation utilities were migrated inline into `voice.mjs`. The NeuTTS Server is now the sole TTS backend.
+
+Objective: ~~remove ambiguity between orchestration and text-shaping layers.~~ Resolved by removing Kokoro entirely.
 
 Files:
-- Create: `docs/architecture/voice-kokoro-boundary.md`
+- ~~Create: `docs/architecture/voice-kokoro-boundary.md`~~ → Deleted alongside the Kokoro service.
+- ~~`server/services/kokoro-tts.mjs`~~ → Deleted. Shared utilities inlined into `voice.mjs`.
 
 Tasks:
-1. Document role split (`voice.mjs` vs `kokoro-tts.mjs`).
-2. Document data contracts in/out for synthesis planner and API response.
-3. Add clear ownership rule for future changes.
+- ~~1. Document role split (`voice.mjs` vs `kokoro-tts.mjs`).~~ → Not needed: kokoro-tts.mjs removed.
+- ~~2. Remove ambiguous dispatch in `voice.mjs`.~~ → `synthesizeSpeech` now delegates directly to NeuTTS.
+- ~~3. Handle edge cases in segment detection.~~ → Handled by NeuTTS normalization.
 
 Verification:
-- Doc exists and is specific enough to guide contributors.
+- No Kokoro references remain in source code, types, tests, or config UI.
 
 ---
 
@@ -98,5 +101,5 @@ Verification:
 
 - Kanban logic isolated in service layer.
 - useChat has first extracted submodule with no API break.
-- Voice/Kokoro boundary documented.
+- ~~Voice/Kokoro boundary documented.~~ → Kokoro removed entirely; voice pipeline consolidated to NeuTTS only.
 - Targeted tests executed and reported.
