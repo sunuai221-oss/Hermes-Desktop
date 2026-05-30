@@ -10,6 +10,20 @@ const VALID_MODES = new Set(['prompt', 'delegate', 'profiles']);
 const VALID_PROFILE_NAME_PATTERN = /^[\w.-]+$/;
 const BLOCKING_EXECUTION_EDGE_KINDS = new Set(['handoff', 'review', 'qa']);
 const CONTEXTUAL_EXECUTION_EDGE_KINDS = new Set(['broadcast', 'escalation']);
+const ACTIVE_RUN_STATUSES = new Set(['queued', 'running']);
+const OPEN_PANDAS_DATASET_EXTENSIONS = new Set([
+  '.csv',
+  '.tsv',
+  '.txt',
+  '.xls',
+  '.xlsx',
+  '.xlsm',
+  '.json',
+  '.parquet',
+]);
+const TOOLSET_MAX_ATTACHMENT_BYTES = 35 * 1024 * 1024;
+const TOOLSET_OPEN_PANDAS_TIMEOUT_MS = 8 * 60 * 1000;
+const TOOLSET_OPEN_PANDAS_POLL_INTERVAL_MS = 1200;
 const DEFAULT_AGENCY_REPO_URL = 'https://github.com/msitarzewski/agency-agents';
 const DEFAULT_AGENCY_REPO_BRANCH = 'main';
 const GITHUB_API_BASE = 'https://api.github.com';
@@ -83,6 +97,108 @@ function compareStrings(a, b) {
 function arraysEqual(a = [], b = []) {
   if (a.length !== b.length) return false;
   return a.every((value, index) => value === b[index]);
+}
+
+function sanitizeUploadFileName(value, fallback = 'attachment.bin') {
+  const raw = cleanString(value);
+  const normalized = raw
+    .replace(/[^\w.-]+/g, '_')
+    .replace(/^_+/, '')
+    .replace(/\.+$/, '');
+  if (!normalized) return fallback;
+  return normalized.length > 120 ? normalized.slice(0, 120) : normalized;
+}
+
+function parseDataUrl(value) {
+  const match = String(value || '').match(/^data:([^;,]+)?(?:;charset=[^;,]+)?;base64,([A-Za-z0-9+/=\s]+)$/i);
+  if (!match) return null;
+  return {
+    mimeType: String(match[1] || '').toLowerCase() || 'application/octet-stream',
+    base64: match[2].replace(/\s+/g, ''),
+  };
+}
+
+function decodeAttachmentBytes(rawPayload, label) {
+  const payload = rawPayload && typeof rawPayload === 'object' ? rawPayload : null;
+  if (!payload) return null;
+
+  let base64 = cleanString(payload.base64);
+  let mimeType = cleanString(payload.mimeType).toLowerCase() || 'application/octet-stream';
+  if (!base64) {
+    const parsedDataUrl = parseDataUrl(payload.dataUrl);
+    if (parsedDataUrl) {
+      base64 = parsedDataUrl.base64;
+      mimeType = mimeType || parsedDataUrl.mimeType;
+    }
+  }
+  if (!base64) return null;
+
+  let bytes;
+  try {
+    bytes = Buffer.from(base64, 'base64');
+  } catch {
+    throw createHttpError(400, `${label} contains invalid base64 data`);
+  }
+  if (!bytes.length) throw createHttpError(400, `${label} is empty`);
+  if (bytes.length > TOOLSET_MAX_ATTACHMENT_BYTES) {
+    throw createHttpError(413, `${label} exceeds ${TOOLSET_MAX_ATTACHMENT_BYTES} bytes`);
+  }
+
+  const fileName = sanitizeUploadFileName(payload.fileName, `${label}.bin`);
+  const extensionMatch = fileName.match(/(\.[^.]+)$/);
+  const extension = extensionMatch ? extensionMatch[1].toLowerCase() : '';
+  return {
+    fileName,
+    extension,
+    mimeType,
+    bytes,
+  };
+}
+
+function extractDatasetCandidatesFromText(content) {
+  const text = String(content || '');
+  if (!text) return [];
+
+  const matches = text.match(/[A-Za-z0-9_\-./\\]+\.(csv|tsv|txt|xls|xlsx|xlsm|json|parquet)\b/gi) || [];
+  const deduped = [];
+  const seen = new Set();
+  for (const match of matches) {
+    const normalized = String(match || '').trim();
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(normalized);
+    if (deduped.length >= 12) break;
+  }
+  return deduped;
+}
+
+function summarizeOpenPandasPayload(payload) {
+  const summaryText = cleanString(payload?.summary?.text || payload?.summary?.interpretation);
+  const status = cleanString(payload?.status || 'unknown');
+  const shape = Array.isArray(payload?.dataset?.shape)
+    ? payload.dataset.shape.join(' x ')
+    : '';
+  const chartCount = Array.isArray(payload?.charts) ? payload.charts.length : 0;
+  const warningsCount = Array.isArray(payload?.warnings) ? payload.warnings.length : 0;
+
+  const lines = [`Open_Pandas_AI status: ${status}.`];
+  if (shape) lines.push(`Dataset shape: ${shape}.`);
+  if (summaryText) lines.push(`Summary: ${summaryText}`);
+  if (chartCount > 0) lines.push(`Charts generated: ${chartCount}.`);
+  if (warningsCount > 0) lines.push(`Warnings: ${warningsCount}.`);
+  return lines.join('\n');
+}
+
+function parseToolsetOptions(payload) {
+  const options = payload?.toolsetOptions;
+  if (!options || typeof options !== 'object' || Array.isArray(options)) return {};
+  return options;
+}
+
+function normalizeNodeToolsets(node) {
+  return asStringArray(node?.toolsets).map(item => cleanString(item).toLowerCase()).filter(Boolean);
 }
 
 function normalizeRelativePath(value) {
@@ -430,6 +546,8 @@ function buildProfileNodePrompt(workspace, node, agent, agentsById, options = {}
     lines.push('## QA Focus', '', 'Validate acceptance criteria, edge cases, and testability. Return explicit verification steps and any blocking issues.', '');
   }
 
+  const toolsetContext = cleanString(options.toolsetContext);
+  if (toolsetContext) lines.push(toolsetContext, '');
   if (node.skills?.length) lines.push('## Skills', '', node.skills.join(', '), '');
   if (node.toolsets?.length) lines.push('## Toolsets', '', node.toolsets.join(', '), '');
   if (agent?.soul) appendSection(lines, 'Agent Identity', agent.soul);
@@ -1286,6 +1404,336 @@ export function createAgentStudioService({
     };
   }
 
+  function resolveWorkspaceRunAttachments(payload = {}) {
+    const attachments = payload?.attachments && typeof payload.attachments === 'object' && !Array.isArray(payload.attachments)
+      ? payload.attachments
+      : {};
+
+    const documentAttachment = decodeAttachmentBytes(
+      attachments.document || payload.document,
+      'document attachment',
+    );
+    let datasetAttachment = decodeAttachmentBytes(
+      attachments.dataset || payload.dataset,
+      'dataset attachment',
+    );
+    if (!datasetAttachment && documentAttachment && OPEN_PANDAS_DATASET_EXTENSIONS.has(documentAttachment.extension)) {
+      datasetAttachment = documentAttachment;
+    }
+
+    return {
+      document: documentAttachment,
+      dataset: datasetAttachment,
+    };
+  }
+
+  async function waitForOpenPandasRun(hermes, runId, runners, timeoutMs = TOOLSET_OPEN_PANDAS_TIMEOUT_MS) {
+    if (!runners?.openPandasAiService?.getRun) {
+      throw createHttpError(501, 'Open_Pandas_AI service is not available in this runtime');
+    }
+
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const run = await runners.openPandasAiService.getRun(hermes, runId);
+      if (!ACTIVE_RUN_STATUSES.has(run?.status)) return run;
+      await new Promise(resolve => setTimeout(resolve, TOOLSET_OPEN_PANDAS_POLL_INTERVAL_MS));
+    }
+
+    throw createHttpError(504, `Open_Pandas_AI run ${runId} timed out after ${timeoutMs} ms`);
+  }
+
+  async function runDocumentParseToolset({
+    hermes,
+    sharedRuntimeState,
+    runners,
+    runDir,
+  }) {
+    const startedAt = nowIso();
+    if (!runners?.documentParserService) {
+      return {
+        toolset: 'document_parse',
+        status: 'skipped',
+        summary: 'LiteParse parser service is not configured.',
+        startedAt,
+        finishedAt: nowIso(),
+      };
+    }
+
+    const attachment = sharedRuntimeState?.attachments?.document || sharedRuntimeState?.attachments?.dataset || null;
+    if (!attachment) {
+      return {
+        toolset: 'document_parse',
+        status: 'skipped',
+        summary: 'No document attachment provided for parsing.',
+        startedAt,
+        finishedAt: nowIso(),
+      };
+    }
+
+    const parser = runners.documentParserService;
+    const docDir = path.join(runDir, 'document-parse');
+    await fs.mkdir(docDir, { recursive: true });
+    const targetPath = path.join(docDir, attachment.fileName);
+    await fs.writeFile(targetPath, attachment.bytes);
+
+    if (typeof parser.isSupportedDocumentPath === 'function' && !parser.isSupportedDocumentPath(targetPath)) {
+      return {
+        toolset: 'document_parse',
+        status: 'failed',
+        summary: `Unsupported document extension for ${attachment.fileName}.`,
+        error: 'unsupported_document_extension',
+        startedAt,
+        finishedAt: nowIso(),
+      };
+    }
+
+    try {
+      const parsed = await parser.parseDocument(hermes, {
+        referenceValue: attachment.fileName,
+        resolvedPath: targetPath,
+        maxChars: 16000,
+      });
+      const datasetCandidates = extractDatasetCandidatesFromText(parsed?.content || '');
+
+      sharedRuntimeState.parsedDocument = {
+        fileName: attachment.fileName,
+        content: String(parsed?.content || ''),
+        warning: cleanString(parsed?.warning) || undefined,
+        charCount: Number(parsed?.charCount || 0),
+        pageCount: Number(parsed?.meta?.pageCount || 0),
+        datasetCandidates,
+      };
+
+      if (!sharedRuntimeState.attachments.dataset && OPEN_PANDAS_DATASET_EXTENSIONS.has(attachment.extension)) {
+        sharedRuntimeState.attachments.dataset = attachment;
+      }
+
+      const summaryParts = [
+        `Parsed ${attachment.fileName}.`,
+        sharedRuntimeState.parsedDocument.pageCount > 0
+          ? `${sharedRuntimeState.parsedDocument.pageCount} page(s) extracted.`
+          : `${sharedRuntimeState.parsedDocument.charCount} chars extracted.`,
+      ];
+      if (datasetCandidates.length > 0) {
+        summaryParts.push(`Detected dataset references: ${datasetCandidates.join(', ')}.`);
+      }
+
+      return {
+        toolset: 'document_parse',
+        status: 'completed',
+        summary: summaryParts.join(' '),
+        data: {
+          fileName: attachment.fileName,
+          pageCount: sharedRuntimeState.parsedDocument.pageCount,
+          charCount: sharedRuntimeState.parsedDocument.charCount,
+          datasetCandidates,
+          warning: sharedRuntimeState.parsedDocument.warning || null,
+        },
+        startedAt,
+        finishedAt: nowIso(),
+      };
+    } catch (error) {
+      return {
+        toolset: 'document_parse',
+        status: 'failed',
+        summary: `LiteParse failed for ${attachment.fileName}.`,
+        error: error?.message || 'document_parse_failed',
+        startedAt,
+        finishedAt: nowIso(),
+      };
+    }
+  }
+
+  async function runOpenPandasAnalysisToolset({
+    hermes,
+    task,
+    payload,
+    sharedRuntimeState,
+    runners,
+  }) {
+    const startedAt = nowIso();
+    if (!runners?.openPandasAiService?.startAnalysis || !runners?.openPandasAiService?.getRun) {
+      return {
+        toolset: 'open_pandas_analysis',
+        status: 'skipped',
+        summary: 'Open_Pandas_AI connector is not available in this runtime.',
+        startedAt,
+        finishedAt: nowIso(),
+      };
+    }
+
+    const datasetAttachment = sharedRuntimeState?.attachments?.dataset || null;
+    if (!datasetAttachment) {
+      return {
+        toolset: 'open_pandas_analysis',
+        status: 'skipped',
+        summary: 'No dataset attachment available for Open_Pandas_AI.',
+        startedAt,
+        finishedAt: nowIso(),
+      };
+    }
+
+    if (!OPEN_PANDAS_DATASET_EXTENSIONS.has(datasetAttachment.extension)) {
+      return {
+        toolset: 'open_pandas_analysis',
+        status: 'failed',
+        summary: `Dataset extension ${datasetAttachment.extension || '(none)'} is not supported by Open_Pandas_AI.`,
+        error: 'unsupported_dataset_extension',
+        startedAt,
+        finishedAt: nowIso(),
+      };
+    }
+
+    const toolsetOptions = parseToolsetOptions(payload);
+    const openPandasOptions = (
+      toolsetOptions.open_pandas_analysis
+      && typeof toolsetOptions.open_pandas_analysis === 'object'
+      && !Array.isArray(toolsetOptions.open_pandas_analysis)
+    ) ? toolsetOptions.open_pandas_analysis : {};
+
+    const question = cleanString(
+      payload?.analysisQuestion
+      || openPandasOptions.question
+      || task
+      || `Analyze dataset ${datasetAttachment.fileName} and report actionable insights`,
+    );
+    const options = (
+      openPandasOptions.options
+      && typeof openPandasOptions.options === 'object'
+      && !Array.isArray(openPandasOptions.options)
+    ) ? openPandasOptions.options : {};
+
+    try {
+      const started = await runners.openPandasAiService.startAnalysis(hermes, {
+        question,
+        dataset: {
+          fileName: datasetAttachment.fileName,
+          base64: datasetAttachment.bytes.toString('base64'),
+          mimeType: datasetAttachment.mimeType,
+        },
+        options,
+      });
+      const run = await waitForOpenPandasRun(hermes, started.runId, runners, TOOLSET_OPEN_PANDAS_TIMEOUT_MS);
+      const resultPayload = run?.result && typeof run.result === 'object' ? run.result : null;
+      const engineStatus = cleanString(resultPayload?.status || run?.engineStatus || run?.status || 'unknown');
+      const success = run?.status === 'succeeded' && engineStatus === 'success';
+      const summary = resultPayload
+        ? summarizeOpenPandasPayload(resultPayload)
+        : `Open_Pandas_AI run status: ${run?.status || 'unknown'}.`;
+
+      sharedRuntimeState.openPandas = {
+        runId: started.runId,
+        question,
+        status: run?.status || 'unknown',
+        engineStatus,
+        payload: resultPayload,
+      };
+
+      if (!success) {
+        const errorMessage = cleanString(
+          run?.error?.message
+          || resultPayload?.errors?.message
+          || `Open_Pandas_AI run finished with status ${run?.status || 'unknown'}`,
+        );
+        return {
+          toolset: 'open_pandas_analysis',
+          status: 'failed',
+          summary,
+          error: errorMessage,
+          data: {
+            runId: started.runId,
+            runStatus: run?.status || null,
+            engineStatus,
+          },
+          startedAt,
+          finishedAt: nowIso(),
+        };
+      }
+
+      return {
+        toolset: 'open_pandas_analysis',
+        status: 'completed',
+        summary,
+        data: {
+          runId: started.runId,
+          runStatus: run?.status || null,
+          engineStatus,
+          contractVersion: resultPayload?.contract_version || null,
+        },
+        startedAt,
+        finishedAt: nowIso(),
+      };
+    } catch (error) {
+      return {
+        toolset: 'open_pandas_analysis',
+        status: 'failed',
+        summary: 'Open_Pandas_AI analysis failed before completion.',
+        error: error?.message || 'open_pandas_analysis_failed',
+        startedAt,
+        finishedAt: nowIso(),
+      };
+    }
+  }
+
+  async function executeNodeToolsets({
+    hermes,
+    node,
+    task,
+    payload,
+    sharedRuntimeState,
+    runners,
+    runDir,
+  }) {
+    const configuredToolsets = normalizeNodeToolsets(node);
+    if (configuredToolsets.length === 0) return [];
+
+    const outputs = [];
+    for (const toolset of configuredToolsets) {
+      if (toolset === 'document_parse') {
+        outputs.push(await runDocumentParseToolset({
+          hermes,
+          sharedRuntimeState,
+          runners,
+          runDir,
+        }));
+        continue;
+      }
+
+      if (toolset === 'open_pandas_analysis') {
+        outputs.push(await runOpenPandasAnalysisToolset({
+          hermes,
+          task,
+          payload,
+          sharedRuntimeState,
+          runners,
+        }));
+        continue;
+      }
+
+      outputs.push({
+        toolset,
+        status: 'skipped',
+        summary: `No runtime executor configured for toolset "${toolset}".`,
+        startedAt: nowIso(),
+        finishedAt: nowIso(),
+      });
+    }
+    return outputs;
+  }
+
+  function buildToolsetPromptContext(toolsetOutputs) {
+    const outputs = Array.isArray(toolsetOutputs) ? toolsetOutputs : [];
+    if (outputs.length === 0) return '';
+
+    const lines = ['## Toolset Runtime Results', ''];
+    for (const output of outputs) {
+      lines.push(`### ${output.toolset} [${output.status}]`, '');
+      if (output.summary) lines.push(output.summary, '');
+      if (output.error) lines.push(`Error: ${output.error}`, '');
+    }
+    return lines.join('\n').trim();
+  }
+
   async function runWorkspaceWithGateway(hermes, workspace, agentsById, payload = {}, runners = {}, { executePromptMode = false } = {}) {
     const mode = VALID_MODES.has(payload?.mode) ? payload.mode : workspace.defaultMode;
     const task = cleanString(payload?.task);
@@ -1335,6 +1783,19 @@ export function createAgentStudioService({
       return sessionId;
     };
     let persistingCompletion = false;
+    const sharedRuntimeState = {
+      attachments: mode === 'profiles'
+        ? resolveWorkspaceRunAttachments(payload)
+        : { document: null, dataset: null },
+      parsedDocument: null,
+      openPandas: null,
+    };
+    const profileRuntimeRunRoot = path.join(
+      hermes?.paths?.appState || hermes?.home || '.',
+      'agent-studio',
+      'workspace-runs',
+      generatedId('workspace_run'),
+    );
 
     try {
       if (mode === 'prompt') {
@@ -1417,7 +1878,7 @@ export function createAgentStudioService({
 
         const blockingKinds = [...BLOCKING_EXECUTION_EDGE_KINDS];
         const blockingInputs = blockingKinds.flatMap(kind => structuredInputs[kind].filter(input => input.status !== 'completed'));
-        const nodePrompt = buildProfileNodePrompt(workspace, node, agent, agentsById, { task, upstreamByKind });
+        let nodePrompt = buildProfileNodePrompt(workspace, node, agent, agentsById, { task, upstreamByKind });
 
         if (blockingInputs.length > 0) {
           const reasons = blockingInputs.map(input => `${input.label} [${input.status}]`).join(', ');
@@ -1434,13 +1895,49 @@ export function createAgentStudioService({
             error: `Blocked by upstream dependencies: ${reasons}`,
             startedAt,
             finishedAt: nowIso(),
+            toolsetOutputs: [],
           };
         }
 
+        let toolsetOutputs = [];
         try {
           const targetHermes = node.profileName && runners.getHermesContext
             ? await runners.getHermesContext(profileName)
             : hermes;
+          const nodeRunDir = path.join(profileRuntimeRunRoot, sanitizeUploadFileName(node.id, 'node'));
+          toolsetOutputs = await executeNodeToolsets({
+            hermes: targetHermes,
+            node,
+            task,
+            payload,
+            sharedRuntimeState,
+            runners,
+            runDir: nodeRunDir,
+          });
+          nodePrompt = buildProfileNodePrompt(workspace, node, agent, agentsById, {
+            task,
+            upstreamByKind,
+            toolsetContext: buildToolsetPromptContext(toolsetOutputs),
+          });
+          const failedToolset = toolsetOutputs.find(output => output?.status === 'failed');
+          if (failedToolset) {
+            return {
+              nodeId: node.id,
+              agentId: node.agentId,
+              label,
+              role: node.role,
+              profileName,
+              status: 'failed',
+              prompt: nodePrompt,
+              inputs: structuredInputs,
+              output: '',
+              error: cleanString(failedToolset.error) || `Toolset "${failedToolset.toolset}" failed.`,
+              startedAt,
+              finishedAt: nowIso(),
+              toolsetOutputs,
+            };
+          }
+
           const response = await runners.postGatewayChatCompletion(targetHermes, {
             ...(node.modelOverride ? { model: node.modelOverride } : {}),
             source: sessionSource,
@@ -1464,6 +1961,7 @@ export function createAgentStudioService({
             startedAt,
             finishedAt: nowIso(),
             response,
+            toolsetOutputs,
           };
         } catch (error) {
           const message = error?.message || 'Node execution failed';
@@ -1480,6 +1978,7 @@ export function createAgentStudioService({
             error: message,
             startedAt,
             finishedAt: nowIso(),
+            toolsetOutputs,
           };
         }
       };

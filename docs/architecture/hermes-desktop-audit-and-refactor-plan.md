@@ -3,6 +3,28 @@
 Date: 2026-05-11
 Repo: `/mnt/c/Users/<user>/.hermes/hermes-builder`
 
+## Mise à jour 2026-05-28
+
+Ce document reste l'audit architectural initial. Les constats ci-dessous ne
+doivent plus tous être lus comme l'état courant: plusieurs recommandations ont
+été appliquées depuis.
+
+État courant vérifié le 2026-05-28:
+- `npm test` passe maintenant à 80/80.
+- `SoulPage`, `DelegationPage`, `profiles.list()` et `/api/agents` ne sont plus présents dans l'arbre courant.
+- `chatDraftBridge.ts` existe et centralise le pont de draft vers le chat.
+- `runtimeStatus.ts` existe et la responsabilité runtime/gateway est mieux isolée de `ProfileProvider`.
+- `useChat.ts` est déjà découpé en sous-hooks spécialisés.
+- `AgentStudioWorkspaces` est déjà découpé en panneaux et hooks spécialisés.
+- Les sessions sont portées par `src/features/sessions/SessionsContext.tsx`; `Home` et `Sessions` lisent ce store partagé.
+- Les runs workspace via `/run` gardent des appels gateway par noeud non persistants, mais persistent maintenant une session agrégée de task-runner.
+
+Constats encore utiles comme priorités:
+- `KanbanPage.tsx`, `ConfigPage.tsx` et `server/index.mjs` restent de grosses surfaces à découper.
+- Les surfaces legacy/diagnostic `/api/gateway/status` et `/api/kanban/diagnostics` doivent rester documentées ou être réduites.
+- La navigation produit peut encore être clarifiée autour des surfaces canoniques.
+- L'isolation profile-home du Kanban mérite un audit ciblé avant gros refactor.
+
 ## 1. Résumé exécutif
 
 Verdict court:
@@ -28,7 +50,8 @@ Hermes Desktop est une bonne base qui marche, mais il a encore une architecture 
 ## 2. Ce qui a été vérifié
 
 ### Validation factuelle
-- Tests: `npm test` → 66/66 passent
+- Tests audit initial: `npm test` → 66/66 passent
+- Revalidation 2026-05-28: `npm test` → 80/80 passent
 - Build: `npm run build` → OK
 - Lint: `npm run lint` → 12 warnings, 0 erreur
 
@@ -45,7 +68,7 @@ Hermes Desktop est une bonne base qui marche, mais il a encore une architecture 
 - `src/pages/IdentityPage.tsx`
 - `src/pages/HomePage.tsx`
 - `src/pages/ExtensionsPage.tsx`
-- `src/pages/DelegationPage.tsx`
+- `src/pages/DelegationPage.tsx` (historique; plus présent au 2026-05-28)
 - `src/contexts/ProfileProvider.tsx`
 - `server/routes/*`
 
@@ -80,7 +103,7 @@ Hermes Desktop est une bonne base qui marche, mais il a encore une architecture 
   - `MemoryPanel`
   - `ConversationSearch`
 - `ExtensionsPage` est une vraie page connectée
-- `DelegationPage` est une vraie page active, pas un simple placeholder
+- `chatDraftBridge.ts` centralise désormais le handoff draft vers le chat; l'ancienne `DelegationPage` n'est plus montée
 
 Conclusion:
 ce n’est pas un chaos. C’est une base sérieuse, mais trop lourde et redondante par endroits.
@@ -145,17 +168,17 @@ la dette n’est pas d’abord fonctionnelle, elle est structurelle.
 
 ### 5.3 Surface API plus large que l’usage réel
 
-Dans `src/api.ts`:
-- `profiles.list` et `profiles.metadata` pointent vers le même endpoint `/api/profiles/metadata`
-- c’est un doublon inutile
+Dans `src/api.ts` lors de l'audit initial:
+- `profiles.list` et `profiles.metadata` pointaient vers le même endpoint `/api/profiles/metadata`
+- ce doublon n'est plus présent au 2026-05-28
 
-Routes backend présentes mais non consommées par le frontend actuel:
-- `/api/agents`
+Routes backend présentes mais non consommées par le frontend lors de l'audit initial:
+- `/api/agents` (constat historique; route retirée au 2026-05-28)
 - `/api/gateway/status` (alias legacy de `process-status`, utile surtout pour compatibilité/tests)
 - `/api/kanban/diagnostics`
 
 Reliquat legacy clair:
-- `src/pages/SoulPage.tsx`
+- `src/pages/SoulPage.tsx` (constat historique; fichier absent au 2026-05-28)
 - contenu: simple alias `export { IdentityPage as SoulPage }`
 - aucun consommateur détecté côté `src`
 
@@ -188,9 +211,9 @@ une seule couche doit calculer l’état runtime, les autres doivent consommer c
 ### 5.5 Couplage implicite via localStorage pour des flux produit
 
 Pattern vérifié:
-- `DelegationPage.tsx` écrit dans `localStorage`
-- `AgentStudioWorkspaces.tsx` écrit aussi dans `localStorage`
-- `useChat.ts` lit ensuite ces clés:
+- `DelegationPage.tsx` écrivait dans `localStorage` dans l'audit initial; cette page n'est plus présente au 2026-05-28
+- `AgentStudioWorkspaces.tsx` passe désormais par le bridge dédié de draft
+- `chatDraftBridge.ts` garde les clés de stockage comme détail interne:
   - `hermes-chat-draft`
   - `hermes-chat-draft-ts`
 
@@ -212,7 +235,7 @@ Ce n’est pas grave en soi, mais pour cette application cela ajoute du bruit de
 ### 5.7 Nommage produit encore un peu flou
 
 Exemples:
-- `DelegationPage` agit surtout comme composer de prompt `delegate_task`, plus que comme vrai orchestrateur complet
+- `DelegationPage` agissait surtout comme composer de prompt `delegate_task` dans l'audit initial; elle n'est plus montée au 2026-05-28
 - `WorkspacesPage` est un simple wrapper autour d’un énorme `AgentStudioWorkspaces`
 - `Home` coexiste avec `Chat` alors que `Chat` est déjà la vraie entrée métier principale
 
@@ -226,11 +249,11 @@ Réponse rigoureuse:
 - oui, il existe des reliquats et surfaces inutiles ou redondantes
 
 Les plus clairs:
-- `src/pages/SoulPage.tsx` → reliquat de compatibilité
-- `profiles.list` vs `profiles.metadata` → doublon API
-- `/api/agents` → route backend sans usage frontend trouvé
-- `/api/gateway/status` → alias legacy
-- `/api/kanban/diagnostics` → exposé mais non branché à l’UI
+- `src/pages/SoulPage.tsx` → reliquat historique, absent au 2026-05-28
+- `profiles.list` vs `profiles.metadata` → doublon historique, absent au 2026-05-28
+- `/api/agents` → route historique sans usage frontend trouvé, absente au 2026-05-28
+- `/api/gateway/status` → alias legacy restant
+- `/api/kanban/diagnostics` → route diagnostic restante, à documenter ou réduire
 
 Conclusion:
 ce n’est pas une app morte, mais ce n’est pas encore une app taillée au plus juste.
@@ -244,7 +267,7 @@ ce n’est pas une app morte, mais ce n’est pas encore une app taillée au plu
 - Profiles ↔ metadata/CRUD: bien relié
 
 ### Là où la liaison est moins propre
-- Delegation → Chat via `localStorage`
+- Drafts produit → Chat: désormais via `chatDraftBridge.ts`, avec stockage interne de compatibilité
 - Workspaces ↔ Templates avec duplication de library
 - Runtime status calculé à plusieurs endroits
 

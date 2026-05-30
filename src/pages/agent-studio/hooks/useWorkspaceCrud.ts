@@ -18,6 +18,11 @@ type DragData = {
   nodeId?: string;
 };
 
+type CanvasViewportPoint = { x: number; y: number };
+type CanvasViewportDelta = { x: number; y: number };
+type CanvasPan = { x: number; y: number };
+type CanvasViewTransform = { zoom: number; pan: CanvasPan };
+
 interface UseWorkspaceCrudOptions {
   loadTemplates: () => Promise<TemplatesLoadResult>;
   clearLibraryError: () => void;
@@ -60,8 +65,39 @@ function createEdge(fromNodeId: string, toNodeId: string, kind: WorkspaceEdgeKin
   };
 }
 
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max);
+function normalizeCanvasViewTransform(view: CanvasViewTransform | undefined): CanvasViewTransform {
+  const zoom = Number(view?.zoom);
+  const normalizedZoom = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+  const panX = Number(view?.pan?.x);
+  const panY = Number(view?.pan?.y);
+  return {
+    zoom: normalizedZoom,
+    pan: {
+      x: Number.isFinite(panX) ? panX : 0,
+      y: Number.isFinite(panY) ? panY : 0,
+    },
+  };
+}
+
+function viewportPointToCanvasPosition(
+  viewportPoint: CanvasViewportPoint,
+  canvasRect: DOMRect,
+  view: CanvasViewTransform,
+) {
+  return {
+    x: (viewportPoint.x - canvasRect.left - view.pan.x) / view.zoom,
+    y: (viewportPoint.y - canvasRect.top - view.pan.y) / view.zoom,
+  };
+}
+
+function viewportDeltaToCanvasDelta(
+  viewportDelta: CanvasViewportDelta,
+  view: CanvasViewTransform,
+) {
+  return {
+    x: viewportDelta.x / view.zoom,
+    y: viewportDelta.y / view.zoom,
+  };
 }
 
 function formatError(error: unknown, fallback: string) {
@@ -341,19 +377,24 @@ export function useWorkspaceCrud({
     event: DragEndEvent,
     agentsById: Map<string, AgentDefinition>,
     canvasRef: MutableRefObject<HTMLDivElement | null>,
-    zoom = 1,
+    canvasView: CanvasViewTransform = { zoom: 1, pan: { x: 0, y: 0 } },
   ) => {
     if (!activeWorkspace) return;
     const data = event.active.data.current as DragData | undefined;
+    const view = normalizeCanvasViewTransform(canvasView);
 
     if (data?.type === 'workspace-node' && data.nodeId) {
+      const delta = viewportDeltaToCanvasDelta(
+        { x: event.delta.x, y: event.delta.y },
+        view,
+      );
       const nodes = activeWorkspace.nodes.map(node =>
         node.id === data.nodeId
           ? {
               ...node,
               position: {
-                x: Math.max(0, node.position.x + event.delta.x / zoom),
-                y: Math.max(0, node.position.y + event.delta.y / zoom),
+                x: node.position.x + delta.x,
+                y: node.position.y + delta.y,
               },
             }
           : node,
@@ -368,11 +409,13 @@ export function useWorkspaceCrud({
 
     const canvasRect = canvasRef.current.getBoundingClientRect();
     const dragRect = event.active.rect.current.translated || event.active.rect.current.initial;
-    const x = dragRect ? dragRect.left - canvasRect.left : 40;
-    const y = dragRect ? dragRect.top - canvasRect.top : 40;
+    const viewportPoint: CanvasViewportPoint = dragRect
+      ? { x: dragRect.left, y: dragRect.top }
+      : { x: canvasRect.left + 40, y: canvasRect.top + 40 };
+    const point = viewportPointToCanvasPosition(viewportPoint, canvasRect, view);
     const node = createNode(agent, {
-      x: clamp(x, 12, Math.max(12, canvasRect.width - 240)),
-      y: clamp(y, 12, Math.max(12, canvasRect.height - 140)),
+      x: point.x,
+      y: point.y,
     });
 
     patchActiveWorkspace({ nodes: [...activeWorkspace.nodes, node] });

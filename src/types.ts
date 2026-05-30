@@ -105,7 +105,7 @@ export interface ContextFilesResponse {
 
 export interface ContextReferenceAttachment {
   id: string;
-  kind: 'file' | 'folder' | 'diff' | 'staged' | 'git' | 'url';
+  kind: 'file' | 'folder' | 'diff' | 'staged' | 'git' | 'url' | 'document';
   value: string;
 }
 
@@ -116,6 +116,8 @@ export interface ResolvedContextReference {
   content: string;
   warning?: string;
   charCount: number;
+  meta?: Record<string, unknown>;
+  cached?: boolean;
 }
 
 export interface PluginInfo {
@@ -299,6 +301,89 @@ export interface KanbanAssignee {
 
 export type ModelThinkMode = boolean | 'low' | 'medium' | 'high';
 
+export type OpenPandasAiConnectorMode = 'cli' | 'api';
+
+export interface OpenPandasAiConnectorConfig {
+  enabled?: boolean;
+  mode?: OpenPandasAiConnectorMode;
+  project_path?: string;
+  venv_path?: string;
+  python_executable?: string;
+  cli_module?: string;
+  api_base_url?: string;
+  request_timeout_ms?: number;
+}
+
+export interface OpenPandasAiStatusCheck {
+  key: string;
+  ok: boolean;
+  message: string;
+  required?: boolean;
+}
+
+export interface OpenPandasAiStatusResponse {
+  status: 'ready' | 'disabled' | 'misconfigured';
+  mode: OpenPandasAiConnectorMode;
+  checks: OpenPandasAiStatusCheck[];
+  config: OpenPandasAiConnectorConfig;
+  log_path?: string | null;
+}
+
+export interface OpenPandasAiRunLogEntry {
+  timestamp: string;
+  level: 'info' | 'warn' | 'error' | string;
+  message: string;
+}
+
+export interface OpenPandasAiRunResponse {
+  runId: string;
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'blocked';
+  engineStatus: string;
+  mode: OpenPandasAiConnectorMode;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  question: string;
+  dataset: {
+    fileName: string;
+    extension: string;
+    bytes: number;
+  };
+  logPath?: string | null;
+  document?: {
+    fileName: string;
+    extension: string;
+    bytes: number;
+    pageCount?: number;
+    charCount?: number;
+    warning?: string | null;
+  } | null;
+  logs: OpenPandasAiRunLogEntry[];
+  result?: Record<string, unknown> | null;
+  error?: {
+    message?: string;
+    statusCode?: number;
+  } | null;
+}
+
+export interface OpenPandasAiLogsResponse {
+  path: string;
+  updatedAt?: string | null;
+  sizeBytes?: number;
+  truncated?: boolean;
+  lineCount?: number;
+  totalLines?: number;
+  content?: string;
+  note?: string | null;
+}
+
+export interface OpenPandasAiRunStartResponse {
+  runId: string;
+  status: 'queued' | 'running';
+  createdAt: string;
+}
+
 export interface HermesConfig {
   model?: {
     default?: string;
@@ -366,6 +451,7 @@ export interface HermesConfig {
     default_session?: string;
     reset_before_spawn?: boolean;
   };
+  open_pandas_ai?: OpenPandasAiConnectorConfig;
   [key: string]: unknown;
 }
 
@@ -615,6 +701,15 @@ export interface AgentWorkspaceExecutionRun {
   error?: string;
   startedAt?: string;
   finishedAt?: string;
+  toolsetOutputs?: Array<{
+    toolset: string;
+    status: 'completed' | 'failed' | 'skipped';
+    summary?: string;
+    error?: string;
+    startedAt?: string;
+    finishedAt?: string;
+    data?: Record<string, unknown> | null;
+  }>;
   response?: unknown;
 }
 

@@ -40,8 +40,8 @@
     "desktop": "electron .",
     "desktop:dev": "node electron/launch-dev.mjs",
     "desktop:smoke": "node scripts/desktop-smoke.mjs",
-    "desktop:pack": "npm run build && electron-builder --dir",
-    "desktop:build": "npm run build && electron-builder --win nsis"
+    "desktop:pack": "npm run install:server && npm run build && electron-builder --dir",
+    "desktop:build": "npm run install:server && npm run build && electron-builder --win nsis"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

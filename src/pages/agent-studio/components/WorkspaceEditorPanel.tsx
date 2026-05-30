@@ -1,6 +1,6 @@
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { ChevronDown, ArrowRight, Check, Copy, GripVertical, Loader2, Plus, RotateCcw, Send, Sparkles, Trash2, X, ZoomIn, ZoomOut } from 'lucide-react';
-import { useMemo, useState, useCallback, useRef, type CSSProperties, type MutableRefObject, type ReactNode } from 'react';
+import { useMemo, useState, useCallback, useEffect, useRef, type CSSProperties, type MutableRefObject, type ReactNode } from 'react';
 import { Card } from '../../../components/Card';
 import { useProfiles } from '../../../contexts/ProfileContext';
 import { cn } from '../../../lib/utils';
@@ -28,6 +28,7 @@ type WorkspaceEditorPanelProps = {
   canvasRef: MutableRefObject<HTMLDivElement | null>;
   canvasZoom: number;
   onCanvasZoomChange: (zoom: number) => void;
+  onCanvasPanChange?: (pan: { x: number; y: number }) => void;
   workspace: AgentWorkspace | null;
   agentsById: Map<string, AgentDefinition>;
   selectedNode: WorkspaceAgentNode | null;
@@ -35,6 +36,7 @@ type WorkspaceEditorPanelProps = {
   selectedEdgeId: string | null;
   generatedPrompt: string;
   copied: boolean;
+  sendingToChat: boolean;
   onSelectNode: (id: string | null) => void;
   onSelectEdge: (id: string | null) => void;
   onRemoveNode: (id: string) => void;
@@ -78,6 +80,7 @@ export function WorkspaceEditorPanel({
   canvasRef,
   canvasZoom,
   onCanvasZoomChange,
+  onCanvasPanChange,
   workspace,
   agentsById,
   selectedNode,
@@ -85,6 +88,7 @@ export function WorkspaceEditorPanel({
   selectedEdgeId,
   generatedPrompt,
   copied,
+  sendingToChat,
   onSelectNode,
   onSelectEdge,
   onRemoveNode,
@@ -111,6 +115,7 @@ export function WorkspaceEditorPanel({
         canvasRef={canvasRef}
         canvasZoom={canvasZoom}
         onCanvasZoomChange={onCanvasZoomChange}
+        onCanvasPanChange={onCanvasPanChange}
         workspace={workspace}
         agentsById={agentsById}
         selectedNodeId={selectedNodeId}
@@ -129,6 +134,7 @@ export function WorkspaceEditorPanel({
         onSelectEdge={onSelectEdge}
         generatedPrompt={generatedPrompt}
         copied={copied}
+        sendingToChat={sendingToChat}
         onSelectNode={onSelectNode}
         onAddEdge={onAddEdge}
         onRemoveEdge={onRemoveEdge}
@@ -153,6 +159,7 @@ function WorkspaceCanvas({
   canvasRef,
   canvasZoom,
   onCanvasZoomChange,
+  onCanvasPanChange,
   workspace,
   agentsById,
   selectedNodeId,
@@ -165,6 +172,7 @@ function WorkspaceCanvas({
   canvasRef: MutableRefObject<HTMLDivElement | null>;
   canvasZoom: number;
   onCanvasZoomChange: (zoom: number) => void;
+  onCanvasPanChange?: (pan: { x: number; y: number }) => void;
   workspace: AgentWorkspace | null;
   agentsById: Map<string, AgentDefinition>;
   selectedNodeId: string | null;
@@ -179,6 +187,10 @@ function WorkspaceCanvas({
   const [isPanning, setIsPanning] = useState(false);
   const isPanningRef = useRef(false);
   const lastMouse = useRef({ x: 0, y: 0 });
+
+  useEffect(() => {
+    onCanvasPanChange?.(pan);
+  }, [onCanvasPanChange, pan]);
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     if (e.ctrlKey || e.metaKey) {
@@ -276,14 +288,12 @@ function WorkspaceCanvas({
             Drag templates from the library into this workspace.
           </div>
         ) : (
-          /* Transformed content — zoom + pan */
+          /* Stable render plane transformed with pan+zoom for both nodes and edges */
           <div
-            className="relative z-10"
+            className="absolute inset-0 z-10 pointer-events-none"
             style={{
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${canvasZoom})`,
               transformOrigin: 'top left',
-              width: 0,
-              height: 0,
             }}
           >
             <WorkspaceEdgesOverlay workspace={workspace} selectedNodeId={selectedNodeId} selectedEdgeId={selectedEdgeId} onSelectEdge={onSelectEdge} onRemoveEdge={onRemoveEdge} />
@@ -359,7 +369,7 @@ function WorkspaceEdgesOverlay({
   if (visibleEdges.length === 0) return null;
 
   return (
-    <svg className="pointer-events-none absolute inset-0 z-20 h-full w-full" aria-hidden="true">
+    <svg className="pointer-events-none absolute inset-0 z-20 h-full w-full overflow-visible" aria-hidden="true">
       <defs>
         <marker id="workspace-edge-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
           <path d="M0,0 L8,4 L0,8 Z" className="fill-primary" />
@@ -485,7 +495,7 @@ function WorkspaceNodeCard({
       }}
       data-node-card
       className={cn(
-        'absolute left-0 top-0 z-10 rounded-lg border bg-card p-3 shadow-sm transition-shadow',
+        'pointer-events-auto absolute left-0 top-0 z-10 rounded-lg border bg-card p-3 shadow-sm transition-shadow',
         selected ? 'border-primary shadow-md' : 'border-border',
         isDragging && 'z-50 shadow-lg',
       )}
@@ -534,6 +544,7 @@ function InspectorPanel({
   agentsById,
   generatedPrompt,
   copied,
+  sendingToChat,
   selectedEdgeId,
   onSelectEdge,
   onSelectNode,
@@ -558,6 +569,7 @@ function InspectorPanel({
   agentsById: Map<string, AgentDefinition>;
   generatedPrompt: string;
   copied: boolean;
+  sendingToChat: boolean;
   selectedEdgeId: string | null;
   onSelectEdge: (id: string | null) => void;
   onSelectNode: (id: string | null) => void;
@@ -845,11 +857,11 @@ function InspectorPanel({
                 <div className="flex items-center gap-1.5">
                   <button
                     onClick={onSendToChat}
-                    disabled={!workspace}
+                    disabled={!workspace || sendingToChat}
                     className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
                   >
-                    <Send size={13} />
-                    Send to Chat
+                    {sendingToChat ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+                    {sendingToChat ? 'Sending...' : 'Send to Chat'}
                   </button>
                   <button
                     onClick={onCopyPrompt}

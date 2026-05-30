@@ -3,13 +3,14 @@ import { useLocation } from 'react-router-dom';
 import {
   House, MessageSquare, Database, Clock3, Puzzle,
   ShieldCheck, Settings, Sparkles,
-  FileStack, Webhook, Globe, BookOpen, Kanban, GitBranchPlus,
+  FileStack, Webhook, Globe, BookOpen, Kanban, GitBranchPlus, BarChart3,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 export type NavItem =
   | 'home' | 'chat' | 'companions' | 'sessions'
   | 'workspaces' | 'templates' | 'kanban'
+  | 'dataAnalysis'
   | 'identity' | 'config' | 'skills' | 'profiles'
   | 'automations' | 'extensions'
   | 'platforms' | 'docs'
@@ -54,6 +55,7 @@ export const navSections: NavSection[] = [
       { id: 'templates',     icon: FileStack,       label: 'Templates',      title: 'Templates',      path: '/templates' },
       { id: 'workspaces',    icon: GitBranchPlus,   label: 'Workspaces',     title: 'Workspaces',     path: '/workspaces' },
       { id: 'kanban',        icon: Kanban,          label: 'Kanban',         title: 'Kanban',         path: '/kanban' },
+      { id: 'dataAnalysis',  icon: BarChart3,       label: 'Data Analysis',  title: 'Data Analysis',  path: '/data-analysis' },
     ],
   },
   {

@@ -197,6 +197,7 @@ Main backend surfaces:
 - `/api/skills`, `/api/skills/content`, `/api/skills/enabled`: local/external skill listing, editing, and enable/disable state.
 - `/api/plugins` and `/api/hooks`: extension and hook discovery.
 - `/api/agent-studio/*`: template library, bundled agency import, workspace CRUD, workspace execution, and generated workspace chat.
+- `/api/open-pandas-ai/*`: Open_Pandas_AI connector status, run orchestration, run retrieval, and dedicated connector logs.
 - `/api/pawrtal/*`: companion discovery, status, use, spawn, vanish, switch, reset, and autostart commands through the WSL `pawrtal` CLI.
 - `/api/live2d/*`: discovery and serving for user-imported Live2D models under the Hermes home.
 - `/api/voice/*`: speech transcription, NeuTTS synthesis, streaming synthesis events, and generated audio file serving.

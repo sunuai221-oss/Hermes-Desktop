@@ -8,6 +8,8 @@ function respondWithRouteError(res, error, fallbackMessage) {
 export function registerAgentStudioRoutes({
   app,
   agentStudioService,
+  documentParserService,
+  openPandasAiService,
   getHermesContext,
   postGatewayChatCompletion,
   postPersistedGatewayChatCompletion = postGatewayChatCompletion,
@@ -125,6 +127,8 @@ export function registerAgentStudioRoutes({
       res.json(await agentStudioService.executeWorkspace(req.hermes, req.params.id, req.body || {}, {
         getHermesContext,
         postGatewayChatCompletion,
+        documentParserService,
+        openPandasAiService,
         startWorkspaceRunSession,
         finishWorkspaceRunSession,
       }));
@@ -138,6 +142,8 @@ export function registerAgentStudioRoutes({
       res.json(await agentStudioService.runWorkspaceTask(req.hermes, req.params.id, req.body || {}, {
         getHermesContext,
         postGatewayChatCompletion,
+        documentParserService,
+        openPandasAiService,
         startWorkspaceRunSession,
         finishWorkspaceRunSession,
       }));

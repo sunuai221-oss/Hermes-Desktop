@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, nativeTheme, shell } from 'electron';
 import { execFileSync, spawn } from 'node:child_process';
+import { createWriteStream } from 'node:fs';
 import { access } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
@@ -12,8 +13,10 @@ const APP_ICON = path.join(APP_ROOT, 'build', 'icons', 'icon-256.png');
 const BACKEND_PORT = Number(process.env.HERMES_DESKTOP_BACKEND_PORT || process.env.HERMES_BUILDER_PORT || process.env.PORT || 3020);
 const APP_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 const HEALTH_URL = `${APP_URL}/api/desktop/health`;
+const OPEN_PANDAS_STATUS_URL = `${APP_URL}/api/open-pandas-ai/status`;
 const GATEWAY_PORT = Number(process.env.HERMES_GATEWAY_PORT || 8642);
 const GATEWAY_BASE_URL = `http://127.0.0.1:${GATEWAY_PORT}`;
+const BACKEND_LOG_FILE_NAME = 'hermes-backend.log';
 const IS_DEV = process.env.HERMES_ELECTRON_DEV === '1';
 const DEFAULT_WSL_DISTRO = process.env.HERMES_WSL_DISTRO || 'Ubuntu';
 const DETECTED_WSL_HOME = detectWslHome(DEFAULT_WSL_DISTRO);
@@ -23,6 +26,7 @@ const DEFAULT_HERMES_HOME_UNC = process.env.HERMES_HOME || wslPathToUnc(DEFAULT_
 let mainWindow = null;
 let backendProcess = null;
 let backendOwnedByElectron = false;
+let backendLogStream = null;
 
 function normalizeWslPath(value) {
   return String(value || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
@@ -70,6 +74,35 @@ function wslPathToUnc(distro, wslPath) {
 
 function log(...args) {
   console.log('[hermes-electron]', ...args);
+}
+
+function writeBackendLog(prefix, chunk, output = process.stdout) {
+  const text = String(chunk || '');
+  if (!text) return;
+  output.write(`${prefix}${text}`);
+  if (backendLogStream) {
+    backendLogStream.write(`${new Date().toISOString()} ${prefix}${text}`);
+  }
+}
+
+function initializeBackendLogStream() {
+  try {
+    app.setAppLogsPath();
+    const logsDir = app.getPath('logs');
+    const logPath = path.join(logsDir, BACKEND_LOG_FILE_NAME);
+    backendLogStream = createWriteStream(logPath, { flags: 'a' });
+    log(`Backend logs will be written to ${logPath}`);
+  } catch (error) {
+    console.warn('[hermes-electron] Failed to initialize backend log stream:', error);
+    backendLogStream = null;
+  }
+}
+
+async function closeBackendLogStream() {
+  const stream = backendLogStream;
+  backendLogStream = null;
+  if (!stream) return;
+  await new Promise(resolve => stream.end(resolve));
 }
 
 async function canAccess(targetPath) {
@@ -141,8 +174,8 @@ async function spawnBackend() {
     windowsHide: true,
   });
 
-  child.stdout.on('data', (chunk) => process.stdout.write(`[desktop-backend] ${chunk}`));
-  child.stderr.on('data', (chunk) => process.stderr.write(`[desktop-backend:err] ${chunk}`));
+  child.stdout.on('data', (chunk) => writeBackendLog('[desktop-backend] ', chunk, process.stdout));
+  child.stderr.on('data', (chunk) => writeBackendLog('[desktop-backend:err] ', chunk, process.stderr));
   child.on('exit', (code, signal) => {
     log(`Desktop backend exited (code=${code}, signal=${signal})`);
     if (backendProcess === child) {
@@ -197,6 +230,24 @@ async function ensureGateway() {
   }
 }
 
+async function checkOpenPandasStatus() {
+  try {
+    const response = await fetch(OPEN_PANDAS_STATUS_URL, { method: 'GET' });
+    if (!response.ok) {
+      log(`Open_Pandas_AI status probe returned HTTP ${response.status}`);
+      return;
+    }
+    const payload = await response.json();
+    if (payload?.status === 'disabled') {
+      log('Open_Pandas_AI connector disabled. Hermes continues in fallback mode.');
+      return;
+    }
+    log(`Open_Pandas_AI connector status: ${payload?.status || 'unknown'} (${payload?.mode || 'cli'})`);
+  } catch (error) {
+    log(`Open_Pandas_AI status probe failed: ${error?.message || error}`);
+  }
+}
+
 function getBackgroundColor() {
   return nativeTheme.shouldUseDarkColors ? '#1a120d' : '#fcf0e4';
 }
@@ -204,6 +255,7 @@ function getBackgroundColor() {
 async function createMainWindow() {
   await ensureBackend();
   await ensureGateway();
+  await checkOpenPandasStatus();
 
   mainWindow = new BrowserWindow({
     width: 1480,
@@ -278,6 +330,7 @@ async function shutdownBackend() {
 }
 
 app.whenReady().then(async () => {
+  initializeBackendLogStream();
   try {
     await createMainWindow();
   } catch (error) {
@@ -311,6 +364,7 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', async () => {
   await shutdownBackend();
+  await closeBackendLogStream();
   if (process.platform !== 'darwin') {
     app.quit();
   }
@@ -318,4 +372,5 @@ app.on('window-all-closed', async () => {
 
 app.on('before-quit', async () => {
   await shutdownBackend();
+  await closeBackendLogStream();
 });

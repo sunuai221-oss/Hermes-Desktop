@@ -51,7 +51,7 @@ export function useChatContextFiles({ referenceTemplates }: UseChatContextFilesO
       return;
     }
 
-    if ((newAttachmentKind === 'file' || newAttachmentKind === 'folder' || newAttachmentKind === 'git' || newAttachmentKind === 'url') && !newAttachmentValue.trim()) {
+    if ((newAttachmentKind === 'document' || newAttachmentKind === 'file' || newAttachmentKind === 'folder' || newAttachmentKind === 'git' || newAttachmentKind === 'url') && !newAttachmentValue.trim()) {
       return;
     }
 
@@ -59,6 +59,7 @@ export function useChatContextFiles({ referenceTemplates }: UseChatContextFilesO
       ? template.label
       : newAttachmentValue.trim();
 
+    setResolvingRefs(true);
     setAttachments(current => [...current, { id: `${newAttachmentKind}_${Date.now()}`, kind: newAttachmentKind, value }]);
     setNewAttachmentValue('');
   }, [attachments, newAttachmentKind, newAttachmentValue, referenceTemplates]);

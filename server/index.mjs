@@ -23,6 +23,7 @@ import yaml from 'yaml';
 import dns from 'dns/promises';
 import net from 'net';
 import os from 'os';
+import { createHash } from 'crypto';
 import { execFile, execFileSync, spawn } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath, pathToFileURL } from 'url';
@@ -48,6 +49,7 @@ import { registerIdentityRoutes } from './routes/identity.mjs';
 import { registerKanbanRoutes } from './routes/kanban.mjs';
 import { registerMediaRoutes } from './routes/media.mjs';
 import { registerModelRoutes } from './routes/models.mjs';
+import { registerOpenPandasAiRoutes } from './routes/open-pandas-ai.mjs';
 import { registerPluginRoutes } from './routes/plugins.mjs';
 import { registerPawrtalRoutes } from './routes/pawrtal.mjs';
 import { registerLive2dRoutes } from './routes/live2d.mjs';
@@ -58,6 +60,7 @@ import { registerSkillRoutes } from './routes/skills.mjs';
 // ── Services (factories) ────────────────────────────────────────────
 import { createAgentStudioService } from './services/agent-studio.mjs';
 import { createContextReferenceService } from './services/context-references.mjs';
+import { createDocumentParserService } from './services/document-parser.mjs';
 import { createCronJobsService } from './services/cronjobs.mjs';
 import {
   createProviderCatalogService,
@@ -65,6 +68,7 @@ import {
 } from './services/provider-catalog.mjs';
 import { createPluginsService } from './services/plugins.mjs';
 import { createPawrtalService } from './services/pawrtal.mjs';
+import { createOpenPandasAiService } from './services/open-pandas-ai.mjs';
 import { createRuntimeFilesService } from './services/runtime-files.mjs';
 import { createStateDbManager } from './services/state-db.mjs';
 import { createSkillsService } from './services/skills.mjs';
@@ -170,6 +174,12 @@ const { fetchProviderModels } = createProviderCatalogService({
 const runtimeFilesService = createRuntimeFilesService({ fs, yaml });
 const skillsService = createSkillsService({ fs, path, yaml });
 const agentStudioService = createAgentStudioService({ fs, path, yaml, runtimeFilesService });
+const documentParserService = createDocumentParserService({
+  fs,
+  path,
+  createHash,
+  workspaceRoot: WORKSPACE_ROOT,
+});
 const contextReferenceService = createContextReferenceService({
   fs,
   path,
@@ -177,6 +187,7 @@ const contextReferenceService = createContextReferenceService({
   dns,
   net,
   execFileAsync,
+  documentParserService,
   workspaceRoot: WORKSPACE_ROOT,
 });
 const pluginsService = createPluginsService({
@@ -189,6 +200,14 @@ const pluginsService = createPluginsService({
 const pawrtalService = createPawrtalService({
   fs,
   execFileAsync,
+});
+const openPandasAiService = createOpenPandasAiService({
+  fs,
+  path,
+  axios,
+  execFileAsync,
+  runtimeFilesService,
+  documentParserService,
 });
 const cronJobsService = createCronJobsService({ fs, path });
 const getDesktopProviderRequestConfig = (hermes, body = {}) => getProviderRequestConfig(hermes, body, yaml, OLLAMA_BASE_URL);
@@ -322,6 +341,7 @@ app.use('/api/gateway/chat', bodyParser.json({ limit: LARGE_JSON_LIMIT }));
 app.use('/api/gateway/chat/stream', bodyParser.json({ limit: LARGE_JSON_LIMIT }));
 app.use('/api/images', bodyParser.json({ limit: LARGE_JSON_LIMIT }));
 app.use('/api/voice/respond', bodyParser.json({ limit: LARGE_JSON_LIMIT }));
+app.use('/api/open-pandas-ai/analyze', bodyParser.json({ limit: LARGE_JSON_LIMIT }));
 app.use(bodyParser.json({ limit: DEFAULT_JSON_LIMIT }));
 
 // ── Hermes Context Resolver ─────────────────────────────────────────
@@ -519,6 +539,8 @@ registerProfileRoutes({
 registerAgentStudioRoutes({
   app,
   agentStudioService,
+  documentParserService,
+  openPandasAiService,
   getHermesContext,
   postGatewayChatCompletion: postDesktopGatewayChatCompletion,
   postPersistedGatewayChatCompletion: postPersistedDesktopGatewayChatCompletion,
@@ -548,6 +570,7 @@ registerPluginRoutes({ app, pluginsService });
 registerPawrtalRoutes({ app, pawrtalService });
 registerLive2dRoutes({ app, fs, expressStatic: express.static, hermesBase: HERMES_BASE });
 registerCronJobRoutes({ app, cronJobsService });
+registerOpenPandasAiRoutes({ app, openPandasAiService });
 
 // ── Frontend ────────────────────────────────────────────────────────
 

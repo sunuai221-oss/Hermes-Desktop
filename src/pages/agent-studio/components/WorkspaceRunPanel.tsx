@@ -21,6 +21,7 @@ type WorkspaceRunPanelProps = {
   copied: boolean;
   generating: boolean;
   executing: boolean;
+  sendingToChat: boolean;
   executionResult: AgentWorkspaceExecutionResult | null;
   onGeneratePrompt: () => void;
   onCopyPrompt: () => void;
@@ -35,6 +36,7 @@ export function WorkspaceRunPanel({
   copied,
   generating,
   executing,
+  sendingToChat,
   executionResult,
   onGeneratePrompt,
   onCopyPrompt,
@@ -79,11 +81,11 @@ export function WorkspaceRunPanel({
           </button>
           <button
             onClick={onSendToChat}
-            disabled={!workspace}
+            disabled={!workspace || sendingToChat}
             className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted disabled:opacity-50"
           >
-            <Send size={15} />
-            Send to Chat
+            {sendingToChat ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+            {sendingToChat ? 'Sending...' : 'Send to Chat'}
           </button>
           <button
             onClick={onExecuteWorkspace}
@@ -373,6 +375,32 @@ function RunDetailPanel({
             : resolution.effectiveProfileName}
         </span>
       </div>
+      {Array.isArray(run.toolsetOutputs) && run.toolsetOutputs.length > 0 && (
+        <div className="rounded-xl border border-border bg-muted/20 px-3 py-2">
+          <p className="text-[11px] font-semibold uppercase text-muted-foreground">Toolsets</p>
+          <div className="mt-2 space-y-1.5 text-xs">
+            {run.toolsetOutputs.map((output, index) => (
+              <div key={`${output.toolset}-${index}`} className="rounded-md border border-border bg-background px-2.5 py-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-foreground">{output.toolset}</span>
+                  <span className={cn(
+                    'rounded-full px-1.5 py-0.5 text-[10px] uppercase',
+                    output.status === 'completed'
+                      ? 'bg-success/10 text-success'
+                      : output.status === 'failed'
+                        ? 'bg-destructive/10 text-destructive'
+                        : 'bg-muted text-muted-foreground',
+                  )}>
+                    {output.status}
+                  </span>
+                </div>
+                {output.summary && <p className="mt-1 text-muted-foreground">{output.summary}</p>}
+                {output.error && <p className="mt-1 text-destructive">{output.error}</p>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {run.output && (
         <textarea
           value={run.output}

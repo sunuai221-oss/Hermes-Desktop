@@ -28,7 +28,7 @@ async function withWorkspace(run) {
   }
 }
 
-function createService({ workspaceRoot, axiosGet, dnsLookup, execFileAsync }) {
+function createService({ workspaceRoot, axiosGet, dnsLookup, execFileAsync, documentParserService }) {
   return createContextReferenceService({
     fs,
     path,
@@ -49,6 +49,7 @@ function createService({ workspaceRoot, axiosGet, dnsLookup, execFileAsync }) {
       if (!execFileAsync) throw new Error(`Unexpected execFileAsync(${command})`);
       return execFileAsync(command, args, options);
     },
+    documentParserService,
     workspaceRoot,
   });
 }
@@ -106,6 +107,48 @@ test('context reference service blocks private or loopback URL targets before fe
   });
 });
 
+test('context reference service resolves @document references through the document parser service', async () => {
+  await withWorkspace(async ({ hermes, workspaceRoot }) => {
+    await fs.mkdir(path.join(workspaceRoot, 'docs'), { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, 'docs', 'report.pdf'), 'fake-pdf-bytes', 'utf-8');
+
+    const service = createService({
+      workspaceRoot,
+      documentParserService: {
+        parseDocumentReference(value) {
+          assert.equal(value, 'docs/report.pdf');
+          return { pathValue: 'docs/report.pdf', options: {} };
+        },
+        isSupportedDocumentPath(filePath) {
+          return filePath.endsWith('report.pdf');
+        },
+        async parseDocument(_hermes, payload) {
+          assert.equal(payload.referenceValue, 'docs/report.pdf');
+          assert.equal(payload.maxChars, 12000);
+          return {
+            content: '### Page 1\nRevenue grew by 12%.',
+            warning: undefined,
+            charCount: '### Page 1\nRevenue grew by 12%.'.length,
+            meta: {
+              parser: 'liteparse',
+              pageCount: 1,
+              pages: [{ pageNum: 1, text: 'Revenue grew by 12%.' }],
+            },
+            cached: false,
+          };
+        },
+      },
+    });
+
+    const resolved = await service.resolveContextReference(hermes, '@document:docs/report.pdf');
+    assert.equal(resolved.ref, '@document:docs/report.pdf');
+    assert.equal(resolved.kind, 'document');
+    assert.equal(resolved.label, path.join('docs', 'report.pdf'));
+    assert.equal(resolved.charCount > 0, true);
+    assert.equal(resolved.meta?.parser, 'liteparse');
+  });
+});
+
 test('context reference service clamps git previews and caps commit count at ten', async () => {
   await withWorkspace(async ({ workspaceRoot }) => {
     const largePatch = `${'A'.repeat(10000)}${'B'.repeat(4000)}`;
@@ -146,6 +189,7 @@ test('context reference route preserves per-reference failures with inferred kin
       inferReferenceKind(ref) {
         const value = String(ref || '');
         if (value.startsWith('@url:')) return 'url';
+        if (value.startsWith('@document:')) return 'document';
         return 'file';
       },
       async resolveContextReference(_hermes, ref) {
@@ -173,7 +217,7 @@ test('context reference route preserves per-reference failures with inferred kin
     const response = await fetch(`http://127.0.0.1:${address.port}/api/context-references/resolve`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ refs: ['@file:README.md', '@url:https://example.com'] }),
+      body: JSON.stringify({ refs: ['@file:README.md', '@url:https://example.com', '@document:docs/report.pdf'] }),
     });
 
     assert.equal(response.status, 200);
@@ -189,6 +233,14 @@ test('context reference route preserves per-reference failures with inferred kin
         ref: '@url:https://example.com',
         kind: 'url',
         label: '@url:https://example.com',
+        content: '',
+        warning: 'blocked',
+        charCount: 0,
+      },
+      {
+        ref: '@document:docs/report.pdf',
+        kind: 'document',
+        label: '@document:docs/report.pdf',
         content: '',
         warning: 'blocked',
         charCount: 0,

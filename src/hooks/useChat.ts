@@ -17,6 +17,7 @@ import { useChatUploads } from '../features/chat/hooks/useChatUploads';
 import { useChatMessages } from '../features/chat/hooks/useChatMessages';
 import { useChatTokenEstimates, type ChatTokenEstimates } from '../features/chat/hooks/useChatTokenEstimates';
 import { useChatLocalCommands } from '../features/chat/hooks/useChatLocalCommands';
+import { createWorkspaceChatSession } from '../features/chat/createWorkspaceChatSession';
 import {
   getChatMessagesStorageKey,
   getChatSessionStorageKey,
@@ -32,6 +33,7 @@ export const referenceTemplates: Array<{
   label: string;
   placeholder: string;
 }> = [
+  { kind: 'document', label: '@document', placeholder: 'docs/report.pdf?ocr=true' },
   { kind: 'file', label: '@file', placeholder: 'src/main.py:10-25' },
   { kind: 'folder', label: '@folder', placeholder: 'src/components' },
   { kind: 'diff', label: '@diff', placeholder: '' },
@@ -39,16 +41,6 @@ export const referenceTemplates: Array<{
   { kind: 'git', label: '@git', placeholder: '5' },
   { kind: 'url', label: '@url', placeholder: 'https://example.com' },
 ];
-
-function timestampLabel(date = new Date()) {
-  const pad = (value: number) => String(value).padStart(2, '0');
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-}
-
-function workspaceSessionTitle(workspaceName: unknown) {
-  const name = String(workspaceName || 'Workspace').trim() || 'Workspace';
-  return `${name} workspace ${timestampLabel()}`.slice(0, 100);
-}
 
 // ── Hook ────────────────────────────────────────────────────────
 
@@ -65,7 +57,7 @@ export function useChat({
 }: UseChatOptions) {
   // ── Dependencies ──────────────────────────────────────────
   const gateway = useGatewayContext();
-  const sessionStore = useSessions();
+  const { createSession, sessions } = useSessions();
   const { currentProfile } = useProfiles();
 
   const preferredModel = gateway.config?.model?.default || 'Qwen3.6-27B-UD-IQ3_XXS';
@@ -176,38 +168,15 @@ export function useChat({
     if (draft.source !== 'agent-studio-workspaces') return;
     const workspaceId = typeof draft.metadata?.workspaceId === 'string' ? draft.metadata.workspaceId : undefined;
     const workspaceName = typeof draft.metadata?.workspaceName === 'string' ? draft.metadata.workspaceName : undefined;
-    try {
-      const created = await sessionStore.createSession({
-        source: 'agent-studio-workspace',
-        model,
-        title: workspaceSessionTitle(workspaceName),
-        workspace_id: workspaceId,
-        workspace_name: workspaceName,
-      });
-      if (created?.id) {
-        await hydrateSession(String(created.id));
-        return;
-      }
-    } catch {
-      // Keep the workspace prompt isolated from the current chat even if
-      // pre-creating the titled session fails.
-    }
-    try {
-      const created = await sessionStore.createSession({
-        source: 'agent-studio-workspace',
-        model,
-        workspace_id: workspaceId,
-        workspace_name: workspaceName,
-      });
-      if (created?.id) {
-        await hydrateSession(String(created.id));
-        return;
-      }
-    } catch {
-      // Fall through to a local reset; the prompt still should not mix into the previous chat.
-    }
-    handleNewChat();
-  }, [handleNewChat, hydrateSession, model, sessionStore]);
+    await createWorkspaceChatSession({
+      model,
+      workspaceId,
+      workspaceName,
+      createSession,
+      hydrateSession,
+      handleNewChat,
+    });
+  }, [createSession, handleNewChat, hydrateSession, model]);
 
   useChatDraft({ setInput, onDraft: prepareDraftSession });
 
@@ -220,7 +189,7 @@ export function useChat({
   });
 
   // ── Computed: session label ───────────────────────────────
-  const currentSessionMeta = activeSessionId ? sessionStore.sessions[activeSessionId] : null;
+  const currentSessionMeta = activeSessionId ? sessions[activeSessionId] : null;
   const currentSessionLabel = currentSessionMeta?.title || activeSessionId || null;
 
   // ── Computed: labels ──────────────────────────────────────
@@ -305,7 +274,7 @@ export function useChat({
   }, [resetComposer]);
 
   const { send } = useChatMessages({
-    input, setInput, streaming, setStreaming, uploadingImages, voiceState,
+    input, setInput, streaming, setStreaming, uploadingImages, resolvingRefs, voiceState,
     attachmentsCount: attachments.length, imageAttachments,
     messages, setMessages, activeSessionId, setActiveSessionId, setUsage,
     model, provider, preferredThink, buildUserContent, clearPendingAttachments,

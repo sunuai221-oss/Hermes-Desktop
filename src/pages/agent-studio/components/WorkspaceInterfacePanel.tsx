@@ -1,5 +1,5 @@
 import { AlertTriangle, CheckCircle2, Loader2, MessageSquare, PlaySquare, RotateCcw, Send } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import * as api from '../../../api';
 import { Card } from '../../../components/Card';
 import { useProfiles } from '../../../contexts/ProfileContext';
@@ -22,6 +22,19 @@ type WorkspaceInterfacePanelProps = {
 };
 
 type AgentProgressStatus = 'pending' | 'running' | 'completed' | 'failed' | 'blocked';
+type RuntimeAttachmentKind = 'document' | 'dataset';
+
+type WorkspaceRuntimeAttachment = {
+  kind: RuntimeAttachmentKind;
+  fileName: string;
+  mimeType: string;
+  dataUrl: string;
+  bytes: number;
+};
+
+const MAX_RUNTIME_ATTACHMENT_BYTES = 35 * 1024 * 1024;
+const DOCUMENT_ACCEPT = '.pdf,.doc,.docx,.docm,.dot,.dotm,.dotx,.odt,.ott,.rtf,.pages,.ppt,.pptx,.pptm,.pot,.potm,.potx,.odp,.otp,.key,.xls,.xlsx,.xlsm,.xlsb,.ods,.ots,.csv,.tsv,.numbers,.jpg,.jpeg,.png,.gif,.bmp,.tiff,.tif,.webp,.svg,.txt,.md,.markdown,.log';
+const DATASET_ACCEPT = '.csv,.tsv,.txt,.xls,.xlsx,.xlsm,.json,.parquet';
 
 function formatError(error: unknown, fallback: string) {
   if (typeof error === 'object' && error && 'response' in error) {
@@ -34,6 +47,18 @@ function formatError(error: unknown, fallback: string) {
 
 function messageId() {
   return `workspace_msg_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') resolve(reader.result);
+      else reject(new Error('Could not read attachment.'));
+    };
+    reader.onerror = () => reject(reader.error || new Error('Could not read attachment.'));
+    reader.readAsDataURL(file);
+  });
 }
 
 function normalizeAgentProgressStatus(status?: AgentWorkspaceExecutionResult['status'] | string): AgentProgressStatus {
@@ -79,6 +104,8 @@ export function WorkspaceInterfacePanel({
   const [running, setRunning] = useState(false);
   const [agentProgress, setAgentProgress] = useState<Record<string, AgentProgressStatus>>({});
   const [latestRunSessionId, setLatestRunSessionId] = useState<string | null>(null);
+  const [documentAttachment, setDocumentAttachment] = useState<WorkspaceRuntimeAttachment | null>(null);
+  const [datasetAttachment, setDatasetAttachment] = useState<WorkspaceRuntimeAttachment | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const timersRef = useRef<{ timeouts: number[]; intervals: number[] }>({ timeouts: [], intervals: [] });
   const runTokenRef = useRef<string | null>(null);
@@ -135,8 +162,42 @@ export function WorkspaceInterfacePanel({
     workspaceIdRef.current = nextWorkspaceId;
     resetRunState();
     setInput('');
+    setDocumentAttachment(null);
+    setDatasetAttachment(null);
     onError('');
   }, [workspace?.id, onError, resetRunState]);
+
+  const handleAttachmentSelection = useCallback(async (kind: RuntimeAttachmentKind, event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0] || null;
+    event.currentTarget.value = '';
+    if (!file) return;
+
+    if (file.size > MAX_RUNTIME_ATTACHMENT_BYTES) {
+      onError(`Attachment "${file.name}" exceeds ${Math.round(MAX_RUNTIME_ATTACHMENT_BYTES / (1024 * 1024))}MB.`);
+      return;
+    }
+
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      const payload: WorkspaceRuntimeAttachment = {
+        kind,
+        fileName: file.name,
+        mimeType: file.type || 'application/octet-stream',
+        dataUrl,
+        bytes: file.size,
+      };
+      if (kind === 'document') setDocumentAttachment(payload);
+      else setDatasetAttachment(payload);
+      onError('');
+    } catch (error) {
+      onError(formatError(error, `Could not load ${kind} attachment.`));
+    }
+  }, [onError]);
+
+  const clearAttachment = useCallback((kind: RuntimeAttachmentKind) => {
+    if (kind === 'document') setDocumentAttachment(null);
+    else setDatasetAttachment(null);
+  }, []);
 
   const markAssistantMessage = useCallback((targetMessageId: string, content: string, token: string) => {
     if (!mountedRef.current || runTokenRef.current !== token) return;
@@ -170,7 +231,10 @@ export function WorkspaceInterfacePanel({
 
   const send = async () => {
     const task = input.trim();
-    if (!workspace || !task || running) return;
+    const hasAttachment = Boolean(documentAttachment || datasetAttachment);
+    if (!workspace || running) return;
+    if (!task && !hasAttachment) return;
+    const effectiveTask = task || 'Analyze the attached file(s) and return actionable insights.';
 
     resetRunState({ keepMessages: true });
     const token = `${workspace.id}_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
@@ -181,7 +245,7 @@ export function WorkspaceInterfacePanel({
     setLatestRunSessionId(null);
     onError('');
 
-    const userMessage: WorkspaceInterfaceMessage = { id: messageId(), role: 'user', content: task };
+    const userMessage: WorkspaceInterfaceMessage = { id: messageId(), role: 'user', content: effectiveTask };
     const assistantId = messageId();
     setMessages(current => [...current, userMessage, { id: assistantId, role: 'assistant', content: '' }]);
 
@@ -204,8 +268,24 @@ export function WorkspaceInterfacePanel({
       if (!saved || !mountedRef.current || runTokenRef.current !== token) return;
 
       const response = await api.agentStudio.runWorkspaceTask(saved.id, {
-        task,
+        task: effectiveTask,
         mode: saved.defaultMode,
+        attachments: {
+          ...(documentAttachment ? {
+            document: {
+              fileName: documentAttachment.fileName,
+              dataUrl: documentAttachment.dataUrl,
+              mimeType: documentAttachment.mimeType,
+            },
+          } : {}),
+          ...(datasetAttachment ? {
+            dataset: {
+              fileName: datasetAttachment.fileName,
+              dataUrl: datasetAttachment.dataUrl,
+              mimeType: datasetAttachment.mimeType,
+            },
+          } : {}),
+        },
       });
       if (!mountedRef.current || runTokenRef.current !== token) return;
       setLatestRunSessionId(response.data.session_id || null);
@@ -367,6 +447,56 @@ export function WorkspaceInterfacePanel({
                   <RotateCcw size={12} /> Clear
                 </button>
               </div>
+              <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+                <label className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-border px-2 py-1 text-muted-foreground hover:text-foreground">
+                  <input
+                    type="file"
+                    accept={DOCUMENT_ACCEPT}
+                    className="hidden"
+                    onChange={event => {
+                      void handleAttachmentSelection('document', event);
+                    }}
+                  />
+                  Document
+                </label>
+                <label className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-border px-2 py-1 text-muted-foreground hover:text-foreground">
+                  <input
+                    type="file"
+                    accept={DATASET_ACCEPT}
+                    className="hidden"
+                    onChange={event => {
+                      void handleAttachmentSelection('dataset', event);
+                    }}
+                  />
+                  Dataset
+                </label>
+                {documentAttachment && (
+                  <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-muted-foreground">
+                    Doc: {documentAttachment.fileName}
+                    <button
+                      type="button"
+                      className="text-muted-foreground/70 hover:text-foreground"
+                      onClick={() => clearAttachment('document')}
+                      aria-label="Remove document attachment"
+                    >
+                      x
+                    </button>
+                  </span>
+                )}
+                {datasetAttachment && (
+                  <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-muted-foreground">
+                    Data: {datasetAttachment.fileName}
+                    <button
+                      type="button"
+                      className="text-muted-foreground/70 hover:text-foreground"
+                      onClick={() => clearAttachment('dataset')}
+                      aria-label="Remove dataset attachment"
+                    >
+                      x
+                    </button>
+                  </span>
+                )}
+              </div>
               <div className="flex items-end gap-2">
                 <textarea
                   value={input}
@@ -385,7 +515,7 @@ export function WorkspaceInterfacePanel({
                 <button
                   type="button"
                   onClick={() => void send()}
-                  disabled={!input.trim() || running}
+                  disabled={(!input.trim() && !documentAttachment && !datasetAttachment) || running}
                   className="inline-flex h-[52px] items-center gap-2 rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
                 >
                   {running ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}

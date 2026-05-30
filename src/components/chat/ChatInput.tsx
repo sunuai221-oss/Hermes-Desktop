@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
-  FileCode2, FolderOpen, GitBranch, Globe, ImagePlus,
+  FileCode2, FileText, FolderOpen, GitBranch, Globe, ImagePlus,
   Link2, Mic, Plus, Send, Square, X, Command,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
@@ -15,6 +15,7 @@ const REF_KINDS: Array<{
   label: string;
   placeholder: string;
 }> = [
+  { kind: 'document', icon: <FileText size={13} />, label: 'Document', placeholder: 'docs/report.pdf?ocr=true' },
   { kind: 'file', icon: <FileCode2 size={13} />, label: 'File', placeholder: 'src/main.py:10-25' },
   { kind: 'folder', icon: <FolderOpen size={13} />, label: 'Folder', placeholder: 'src/components' },
   { kind: 'diff', icon: <GitBranch size={13} />, label: 'Diff', placeholder: '' },

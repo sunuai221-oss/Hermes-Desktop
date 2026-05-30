@@ -3,6 +3,13 @@
 Date: 2026-05-18
 Repo: `C:\Users\GAMER PC\.hermes\hermes-builder`
 
+Update 2026-05-28:
+- this document still records the original Lot 0 contracts, but the flow map
+  below has been refreshed where later lots have already landed
+- the shared session state, composer reset, per-node profile editing, and
+  workspace run persistence contracts have all moved forward since the first
+  draft
+
 ## 1. Goal
 
 This document freezes the current contracts around `Sessions`, `Chat`, `Workspaces`, and `Profiles` before the refactor lots start.
@@ -19,14 +26,16 @@ Lot 0 must provide:
 
 ### Frontend references
 
-- `src/hooks/useGateway.ts`
-  - owns runtime polling and the global `sessions` snapshot currently exposed to `Home`
+- `src/features/sessions/SessionsContext.tsx`
+  - owns the shared session map used by `Home`, `Sessions`, and gateway-adjacent consumers
+- `src/contexts/GatewayProvider.tsx`
+  - owns runtime/gateway state and overlays the shared session snapshot for compatibility consumers
 - `src/features/chat/hooks/useChatSession.ts`
-  - owns active chat session hydration, transcript loading, and local transcript caching
+  - owns active chat session hydration, transcript loading, composer reset on session changes, and local transcript caching
 - `src/pages/SessionsPage.tsx`
   - owns list/filter/export/prune/delete/rename flows for persisted sessions
 - `src/pages/HomePage.tsx`
-  - reads recent sessions from `gateway.sessions` and opens them in `Chat`
+  - reads recent sessions from `useSessions()` and opens them in `Chat`
 - `src/pages/agent-studio/AgentStudioWorkspaces.tsx`
   - owns workspace editing, execution, prompt generation, and send-to-chat flows
 
@@ -47,16 +56,18 @@ Lot 0 must provide:
 
 Current path:
 1. Backend sessions are listed through `GET /api/sessions`.
-2. `useGateway.pollMeta()` calls `api.sessions.list()`.
-3. `useGateway` stores the result in `gateway.sessions`.
-4. `HomePage` reads `gateway.sessions`, sorts by activity, and truncates to 4 recent sessions.
-5. Clicking a recent session calls `onOpenSessionInChat(id)`.
-6. `App.tsx` routes that request into `openChatSession()`.
-7. `ChatPage` receives `requestedSessionId` and `requestNonce`.
-8. `useChatSession` hydrates the chosen transcript.
+2. `SessionsProvider.refreshSessions()` calls `api.sessions.list()`.
+3. `SessionsProvider`, exported from `src/features/sessions/SessionsContext.tsx`, stores the shared session map.
+4. `GatewayProvider` exposes that snapshot on gateway state for compatibility consumers.
+5. `HomePage` reads `useSessions().sessions`, sorts by activity, and truncates to 4 recent sessions.
+6. Clicking a recent session calls `onOpenSessionInChat(id)`.
+7. `App.tsx` routes that request into `openChatSession()`.
+8. `ChatPage` receives `requestedSessionId` and `requestNonce`.
+9. `useChatSession` hydrates the chosen transcript.
 
 Files:
-- `src/hooks/useGateway.ts`
+- `src/features/sessions/SessionsContext.tsx`
+- `src/contexts/GatewayProvider.tsx`
 - `src/pages/HomePage.tsx`
 - `src/App.tsx`
 - `src/features/chat/openChatSession.ts`
@@ -65,15 +76,15 @@ Files:
 ### 3.2 Sessions -> Chat
 
 Current path:
-1. `SessionsPage` loads its own local copy of sessions through `api.sessions.list()`.
-2. The page filters by `source`, `workspace_id`, and search text.
+1. `SessionsPage` reads the shared session store through `useSessions()`.
+2. The page filters the shared session map by `source`, `workspace_id`, and search text.
 3. Clicking `Open in Chat` or the row title calls `onOpenSessionInChat(id)`.
 4. `App.tsx` updates `chatSessionRequest`.
 5. `ChatPage` receives the request and passes it to `useChat`.
 6. `useChatSession` calls `api.sessions.transcript(sessionId)` and replaces chat messages with the persisted transcript.
 
-Important current gap:
-- the chat session handoff hydrates the transcript but does not fully reset the composer state
+Current behavior:
+- when the requested session id changes, `useChatSession` resets transient composer state before hydrating the transcript
 
 Files:
 - `src/pages/SessionsPage.tsx`
@@ -136,7 +147,8 @@ Current path:
    - `prompt`: returns `ready` prompt only when called without task-runner semantics
    - `delegate`: persists a session with source `agent-studio-delegate`
    - `profiles`: currently persists gateway calls with source `agent-studio-profile-runtime`
-5. The frontend stores the response only in local component state today.
+5. Task-runner style executions can create aggregate run sessions with workspace metadata.
+6. The frontend stores the immediate response in local component state and can link back to persisted session output when provided.
 
 Files:
 - `src/pages/agent-studio/components/WorkspaceRunPanel.tsx`
@@ -150,10 +162,10 @@ Files:
 Current path:
 1. `WorkspaceInterfacePanel` sends an isolated task.
 2. The frontend calls `POST /api/agent-studio/workspaces/:id/run`.
-3. The route injects the non-persistent gateway callback.
+3. The route uses non-persistent per-call gateway execution for node/LLM calls.
 4. `runWorkspaceTask()` executes in task-runner mode.
-5. The local panel shows the output and local progress only.
-6. No persisted session is intentionally created today for that route.
+5. The backend wraps the aggregate task run with `startWorkspaceRunSession` / `finishWorkspaceRunSession`.
+6. The local panel shows output/progress and receives persisted run session metadata when available.
 
 Files:
 - `src/pages/agent-studio/components/WorkspaceInterfacePanel.tsx`
@@ -167,12 +179,13 @@ Current path:
 2. Workspace node schema already includes `profileName`.
 3. Backend workspace execution already uses `profileName` when present and falls back to the active Hermes profile otherwise.
 4. `WorkspaceNodeTable` displays `profileName`.
-5. `WorkspaceEditorPanel` does not currently let the user edit `profileName`.
+5. `WorkspaceEditorPanel` exposes editable `profileName` controls through the profile runtime helpers.
 
 Files:
 - `src/pages/ProfilesPage.tsx`
 - `src/pages/agent-studio/components/WorkspaceEditorPanel.tsx`
 - `src/pages/agent-studio/components/WorkspaceNodeTable.tsx`
+- `src/pages/agent-studio/profileRuntime.ts`
 - `server/services/agent-studio.mjs`
 
 ## 4. Invariants to Keep or Deliberately Change
@@ -193,12 +206,12 @@ Files:
 - transcript hydration happens inside `useChatSession`
 - local transcript cache is best-effort only
 - draft bridge payloads are consumed once
-- the current handoff does not fully reset the composer; this is a known defect to fix in Lot 2
+- transient composer state must reset when the active persisted session changes
 
 ### 4.3 Workspace execution invariants
 
 - `POST /execute` is the persisted execution route
-- `POST /run` and the legacy `POST /chat` alias are the non-persistent task-runner route today
+- `POST /run` and the legacy `POST /chat` alias use non-persistent per-node gateway calls but can persist an aggregate task-runner session
 - `prompt` mode has two behaviors depending on surface:
   - `/execute`: prompt preparation
   - `/run`: actual task execution
@@ -306,7 +319,7 @@ These scenarios are the baseline to execute before any later lot is considered c
 
 Expected current behavior:
 - transcript loads correctly
-- composer may still contain stale local draft state
+- transient composer state is reset when switching persisted sessions
 
 ### Scenario 2 - Sessions filters and workspace linkage
 
@@ -325,7 +338,7 @@ Expected current behavior:
 
 Expected current behavior:
 - transcript changes
-- composer reset is incomplete and is the defect to fix in Lot 2
+- draft text, attachments, and workspace prompt state should not leak across session handoffs
 
 ### Scenario 4 - Chat toolbar workspace import
 
@@ -355,27 +368,30 @@ Expected current behavior:
    - `profiles` currently persists gateway calls
    - `prompt` via `/execute` returns a prompt-ready state rather than a task-runner session
 
-### Scenario 7 - Interface tab non-persistent baseline
+### Scenario 7 - Interface tab aggregate-run baseline
 
 1. In `Workspaces`, open the `Interface` tab.
 2. Run a task.
 3. Verify local run output appears in the panel.
-4. Verify no user-visible persisted run session is intentionally produced today through `/run`.
+4. Verify the run uses non-persistent per-node gateway calls.
+5. Verify the aggregate task run produces persisted run session metadata when execution succeeds.
 
-This scenario is expected to change in Lot 4.
+Lot 4 has partially landed here: per-node gateway calls remain isolated, while the aggregate workspace run is persisted.
 
 ### Scenario 8 - Profiles to workspace-node baseline
 
 1. Open `Profiles` and note at least one active and one available profile.
 2. Open a workspace with node table entries showing `Profile`.
 3. Verify profile names can be displayed in the node table if already present in saved data.
-4. Verify the node inspector does not currently expose an editable `profileName` field.
+4. Verify the node inspector exposes an editable `profileName` field.
 
-This scenario is expected to change in Lot 3.
+Lot 3 has landed for per-node profile editing.
 
 ## 8. Exact Planned File Touch-Set by Later Lot
 
 ### Lot 1 - Shared session store
+
+Status 2026-05-28: completed through `SessionsProvider`; `GatewayProvider` keeps a compatibility session snapshot.
 
 Planned files:
 - `src/hooks/useGateway.ts`
@@ -385,6 +401,8 @@ Planned files:
 - one new shared session store module under `src/features/sessions/` or `src/contexts/`
 
 ### Lot 2 - Composer reset on every handoff
+
+Status 2026-05-28: completed for persisted session id changes in `useChatSession`.
 
 Planned files:
 - `src/features/chat/hooks/useChatSession.ts`
@@ -397,6 +415,8 @@ Planned files:
 
 ### Lot 3 - Real per-node profile configuration
 
+Status 2026-05-28: completed in the workspace editor/node table flow.
+
 Planned files:
 - `src/pages/agent-studio/components/WorkspaceEditorPanel.tsx`
 - `src/pages/agent-studio/components/WorkspaceNodeTable.tsx`
@@ -406,6 +426,8 @@ Planned files:
 - `server/services/agent-studio.mjs`
 
 ### Lot 4 - Workspace runs converge into Sessions
+
+Status 2026-05-28: partially completed. `/run` now persists aggregate workspace task-runner sessions while keeping per-node gateway execution non-persistent.
 
 Planned files:
 - `server/index.mjs`

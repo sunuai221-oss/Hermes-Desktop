@@ -65,6 +65,8 @@ test('agent studio routes keep gateway execution non-persistent while wiring agg
         callback: runners.postGatewayChatCompletion,
         hasStartSession: typeof runners.startWorkspaceRunSession === 'function',
         hasFinishSession: typeof runners.finishWorkspaceRunSession === 'function',
+        hasDocumentParserService: Boolean(runners.documentParserService),
+        hasOpenPandasAiService: Boolean(runners.openPandasAiService),
       });
       return { success: true };
     },
@@ -74,6 +76,8 @@ test('agent studio routes keep gateway execution non-persistent while wiring agg
         callback: runners.postGatewayChatCompletion,
         hasStartSession: typeof runners.startWorkspaceRunSession === 'function',
         hasFinishSession: typeof runners.finishWorkspaceRunSession === 'function',
+        hasDocumentParserService: Boolean(runners.documentParserService),
+        hasOpenPandasAiService: Boolean(runners.openPandasAiService),
       });
       return { success: true };
     },
@@ -85,6 +89,8 @@ test('agent studio routes keep gateway execution non-persistent while wiring agg
     getHermesContext: async () => ({ profile: 'default' }),
     postGatewayChatCompletion: nonPersistentGateway,
     postPersistedGatewayChatCompletion: persistedGateway,
+    documentParserService: { parseDocument: async () => ({ content: 'ok' }) },
+    openPandasAiService: { startAnalysis: async () => ({ runId: 'run-1' }), getRun: async () => ({ status: 'succeeded' }) },
     startWorkspaceRunSession,
     finishWorkspaceRunSession,
   });
@@ -103,12 +109,14 @@ test('agent studio routes keep gateway execution non-persistent while wiring agg
       isPersisted: entry.callback === persistedGateway,
       hasStartSession: entry.hasStartSession,
       hasFinishSession: entry.hasFinishSession,
+      hasDocumentParserService: entry.hasDocumentParserService ?? false,
+      hasOpenPandasAiService: entry.hasOpenPandasAiService ?? false,
     })),
     [
-      { route: 'run', isNonPersistent: true, isPersisted: false, hasStartSession: true, hasFinishSession: true },
-      { route: 'run', isNonPersistent: true, isPersisted: false, hasStartSession: true, hasFinishSession: true },
-      { route: 'execute', isNonPersistent: true, isPersisted: false, hasStartSession: true, hasFinishSession: true },
-      { route: 'auto-config', isNonPersistent: false, isPersisted: true, hasStartSession: false, hasFinishSession: false },
+      { route: 'run', isNonPersistent: true, isPersisted: false, hasStartSession: true, hasFinishSession: true, hasDocumentParserService: true, hasOpenPandasAiService: true },
+      { route: 'run', isNonPersistent: true, isPersisted: false, hasStartSession: true, hasFinishSession: true, hasDocumentParserService: true, hasOpenPandasAiService: true },
+      { route: 'execute', isNonPersistent: true, isPersisted: false, hasStartSession: true, hasFinishSession: true, hasDocumentParserService: true, hasOpenPandasAiService: true },
+      { route: 'auto-config', isNonPersistent: false, isPersisted: true, hasStartSession: false, hasFinishSession: false, hasDocumentParserService: false, hasOpenPandasAiService: false },
     ],
   );
   assert.deepEqual(sessionLifecycleCalls, []);

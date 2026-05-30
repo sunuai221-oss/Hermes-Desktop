@@ -9,6 +9,7 @@ export function createContextReferenceService({
   dns,
   net,
   execFileAsync,
+  documentParserService = null,
   workspaceRoot,
   maxReferenceChars = DEFAULT_MAX_REFERENCE_CHARS,
   maxFolderEntries = DEFAULT_MAX_FOLDER_ENTRIES,
@@ -113,6 +114,39 @@ export function createContextReferenceService({
       label: path.relative(workspaceRoot, resolvedPath) || path.basename(resolvedPath),
       content,
       charCount: content.length,
+    };
+  }
+
+  async function resolveDocumentReference(hermes, rawValue) {
+    if (!documentParserService) {
+      throw new Error('document parser service is unavailable');
+    }
+    const parsed = documentParserService.parseDocumentReference(rawValue);
+    const resolvedPath = path.resolve(workspaceRoot, parsed.pathValue);
+    if (!isInsideWorkspace(resolvedPath)) throw new Error('path is outside the allowed workspace');
+    if (isSensitivePath(hermes, resolvedPath)) throw new Error('path is a sensitive credential file');
+
+    const stat = await fs.stat(resolvedPath).catch(() => null);
+    if (!stat || !stat.isFile()) throw new Error('document not found');
+    if (!documentParserService.isSupportedDocumentPath(resolvedPath)) {
+      throw new Error('unsupported document extension');
+    }
+
+    const parsedDocument = await documentParserService.parseDocument(hermes, {
+      referenceValue: rawValue,
+      resolvedPath,
+      maxChars: maxReferenceChars,
+    });
+
+    return {
+      ref: `@document:${rawValue}`,
+      kind: 'document',
+      label: path.relative(workspaceRoot, resolvedPath) || path.basename(resolvedPath),
+      content: parsedDocument.content || '[no content extracted]',
+      warning: parsedDocument.warning,
+      charCount: parsedDocument.charCount || 0,
+      meta: parsedDocument.meta || {},
+      cached: Boolean(parsedDocument.cached),
     };
   }
 
@@ -235,6 +269,7 @@ export function createContextReferenceService({
     if (value === '@diff') return 'diff';
     if (value === '@staged') return 'staged';
     if (value.startsWith('@git:')) return 'git';
+    if (value.startsWith('@document:')) return 'document';
     if (value.startsWith('@folder:')) return 'folder';
     if (value.startsWith('@url:')) return 'url';
     return 'file';
@@ -245,6 +280,7 @@ export function createContextReferenceService({
     if (value === '@diff') return resolveGitReference('diff');
     if (value === '@staged') return resolveGitReference('staged');
     if (value.startsWith('@git:')) return resolveGitReference('git', value.slice(5));
+    if (value.startsWith('@document:')) return resolveDocumentReference(hermes, value.slice(10));
     if (value.startsWith('@file:')) return resolveFileReference(hermes, value.slice(6));
     if (value.startsWith('@folder:')) return resolveFolderReference(hermes, value.slice(8));
     if (value.startsWith('@url:')) return resolveUrlReference(value.slice(5));

@@ -7,6 +7,7 @@ export interface TeamNodeDef {
   agentName: string;
   role: WorkspaceAgentRole;
   label?: string;
+  toolsets?: string[];
 }
 
 export interface TeamEdgeDef {
@@ -403,16 +404,16 @@ export const TEAMS: TeamDefinition[] = [
     icon: '📊',
     color: 'blue',
     pipelineBrief:
-      'Data Engineer prépare la donnée → Data Consolidation Agent fusionne et nettoie les sources → Analytics Reporter extrait les métriques → Workflow Optimizer vérifie l’actionnabilité → Executive Summary Generator livre la synthèse.',
+      'Data Engineer cadre la demande → Data Consolidation Agent parse les documents et détecte les jeux de données → Analytics Reporter lance l’analyse Open_Pandas_AI → Workflow Optimizer vérifie l’actionnabilité → Executive Summary Generator livre la synthèse.',
     sharedContext:
       'This workspace turns scattered operational data into a clear intelligence brief. Accuracy, traceability, and actionability are the main quality gates.',
     commonRules:
       '1. Every metric must have a source and a definition.\n2. Flag missing or low-confidence data instead of hiding it.\n3. The final summary must separate observations, risks, and recommended actions.',
-    defaultMode: 'delegate',
+    defaultMode: 'profiles',
     nodes: [
       { agentName: 'Data Engineer', role: 'orchestrator', label: 'Data Lead' },
-      { agentName: 'Data Consolidation Agent', role: 'worker', label: 'Consolidation' },
-      { agentName: 'Analytics Reporter', role: 'worker', label: 'Metrics' },
+      { agentName: 'Data Consolidation Agent', role: 'worker', label: 'Consolidation', toolsets: ['document_parse'] },
+      { agentName: 'Analytics Reporter', role: 'worker', label: 'Metrics', toolsets: ['open_pandas_analysis'] },
       { agentName: 'Workflow Optimizer', role: 'reviewer', label: 'Action Review' },
       { agentName: 'Executive Summary Generator', role: 'observer', label: 'Exec Brief' },
     ],
@@ -850,6 +851,9 @@ export function resolveTeam(
     const nodeId = `node_team_${instanceId}_${i}`;
 
     if (agent) {
+      const nodeToolsets = Array.isArray(def.toolsets) && def.toolsets.length > 0
+        ? def.toolsets
+        : (agent.preferredToolsets || []);
       resolvedNodes.push({
         id: nodeId,
         agentId: agent.id,
@@ -858,7 +862,7 @@ export function resolveTeam(
         position: positions[i],
         modelOverride: agent.defaultModel || '',
         skills: agent.preferredSkills || [],
-        toolsets: agent.preferredToolsets || [],
+        toolsets: nodeToolsets,
       });
     } else if (matches.length > 1) {
       if (!ambiguousAgentsByName.has(def.agentName)) {
@@ -881,6 +885,7 @@ export function resolveTeam(
         agentId: '',
         role: def.role,
         label: def.label || def.agentName,
+        toolsets: def.toolsets || [],
         position: positions[i],
       });
     } else {
@@ -891,6 +896,7 @@ export function resolveTeam(
         agentId: '',
         role: def.role,
         label: def.label || def.agentName,
+        toolsets: def.toolsets || [],
         position: positions[i],
       });
     }

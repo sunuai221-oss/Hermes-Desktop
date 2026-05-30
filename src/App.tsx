@@ -24,6 +24,7 @@ const PlatformsPage = lazy(() => import('./pages/PlatformsPage').then(module => 
 const IdentityPage = lazy(() => import('./pages/IdentityPage').then(module => ({ default: module.IdentityPage })));
 const TemplatesPage = lazy(() => import('./pages/TemplatesPage').then(module => ({ default: module.TemplatesPage })));
 const WorkspacesPage = lazy(() => import('./pages/WorkspacesPage').then(module => ({ default: module.WorkspacesPage })));
+const DataAnalysisPage = lazy(() => import('./pages/DataAnalysisPage').then(module => ({ default: module.DataAnalysisPage })));
 const ContextFilesPage = lazy(() => import('./pages/ContextFilesPage').then(module => ({ default: module.ContextFilesPage })));
 const ExtensionsPage = lazy(() => import('./pages/ExtensionsPage').then(module => ({ default: module.ExtensionsPage })));
 const AutomationsPage = lazy(() => import('./pages/AutomationsPage').then(module => ({ default: module.AutomationsPage })));
@@ -160,6 +161,7 @@ function AppShell() {
                   <Route path="/templates" element={<TemplatesPage />} />
                   <Route path="/workspaces" element={<WorkspacesPage onOpenSessionInChat={openChatSession} />} />
                   <Route path="/kanban" element={<KanbanPage />} />
+                  <Route path="/data-analysis" element={<DataAnalysisPage />} />
                   <Route path="/agent-studio" element={<Navigate to="/workspaces" replace />} />
 
                   {/* ── Agent (Identity, Config) ── */}

@@ -1218,3 +1218,170 @@ test('workspace profile execution marks downstream node blocked when upstream fa
     assert.equal(result.workflow.counts.blocked, 1);
   });
 });
+
+test('workspace profile execution runs document_parse then open_pandas_analysis toolsets with attachments', async () => {
+  await withHermesFiles(async hermes => {
+    const parserAgent = await agentStudioService.createAgent(hermes, {
+      name: 'Parser',
+      soul: '# Parser Soul',
+    });
+    const analystAgent = await agentStudioService.createAgent(hermes, {
+      name: 'Analyst',
+      soul: '# Analyst Soul',
+    });
+
+    const workspace = await agentStudioService.createWorkspace(hermes, {
+      name: 'Data Intelligence Runtime Workspace',
+      defaultMode: 'profiles',
+      nodes: [
+        {
+          id: 'node-parse',
+          agentId: parserAgent.agent.id,
+          role: 'worker',
+          label: 'Parse Document',
+          toolsets: ['document_parse'],
+          position: { x: 1, y: 1 },
+        },
+        {
+          id: 'node-analyze',
+          agentId: analystAgent.agent.id,
+          role: 'worker',
+          label: 'Analyze Dataset',
+          toolsets: ['open_pandas_analysis'],
+          position: { x: 2, y: 1 },
+        },
+      ],
+      edges: [
+        { fromNodeId: 'node-parse', toNodeId: 'node-analyze', kind: 'handoff' },
+      ],
+    });
+
+    const documentParserCalls = [];
+    const openPandasStartCalls = [];
+    const prompts = [];
+    const datasetBase64 = Buffer.from('city,revenue\nDakar,42', 'utf-8').toString('base64');
+
+    const result = await agentStudioService.runWorkspaceTask(hermes, workspace.workspace.id, {
+      task: 'Analyze attached files and produce actionable insights.',
+      mode: 'profiles',
+      attachments: {
+        document: {
+          fileName: 'brief.pdf',
+          base64: Buffer.from('fake-pdf-content', 'utf-8').toString('base64'),
+          mimeType: 'application/pdf',
+        },
+        dataset: {
+          fileName: 'sales.csv',
+          base64: datasetBase64,
+          mimeType: 'text/csv',
+        },
+      },
+    }, {
+      documentParserService: {
+        isSupportedDocumentPath: () => true,
+        parseDocument: async (_targetHermes, payload) => {
+          documentParserCalls.push(payload);
+          return {
+            content: 'Source dataset is sales.csv. Use it for revenue metrics.',
+            charCount: 58,
+            meta: { pageCount: 2 },
+          };
+        },
+      },
+      openPandasAiService: {
+        startAnalysis: async (_targetHermes, payload) => {
+          openPandasStartCalls.push(payload);
+          return { runId: 'opa_run_1', status: 'queued', createdAt: '2026-05-29T10:00:00.000Z' };
+        },
+        getRun: async () => ({
+          runId: 'opa_run_1',
+          status: 'succeeded',
+          result: {
+            status: 'success',
+            summary: { text: 'Revenue is concentrated in two cities.' },
+            dataset: { shape: [10, 5] },
+            charts: [{ id: 'chart-1' }],
+          },
+        }),
+      },
+      postGatewayChatCompletion: async (_targetHermes, body) => {
+        prompts.push(body.messages?.[0]?.content || '');
+        return { choices: [{ message: { content: 'node done' } }] };
+      },
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.status, 'completed');
+    assert.equal(result.runs.length, 2);
+    assert.equal(documentParserCalls.length, 1);
+    assert.equal(openPandasStartCalls.length, 1);
+    assert.equal(openPandasStartCalls[0].dataset.fileName, 'sales.csv');
+    assert.match(openPandasStartCalls[0].question, /Analyze attached files/);
+
+    const parseRun = result.runs.find(run => run.nodeId === 'node-parse');
+    const analyzeRun = result.runs.find(run => run.nodeId === 'node-analyze');
+    assert.equal(parseRun.status, 'completed');
+    assert.equal(analyzeRun.status, 'completed');
+    assert.equal(parseRun.toolsetOutputs[0].toolset, 'document_parse');
+    assert.equal(parseRun.toolsetOutputs[0].status, 'completed');
+    assert.equal(analyzeRun.toolsetOutputs[0].toolset, 'open_pandas_analysis');
+    assert.equal(analyzeRun.toolsetOutputs[0].status, 'completed');
+    assert.match(prompts[1], /Toolset Runtime Results/);
+    assert.match(prompts[1], /Open_Pandas_AI status: success/);
+  });
+});
+
+test('workspace profile execution fails a node when its configured toolset fails', async () => {
+  await withHermesFiles(async hermes => {
+    const analystAgent = await agentStudioService.createAgent(hermes, {
+      name: 'Analyst',
+      soul: '# Analyst Soul',
+    });
+
+    const workspace = await agentStudioService.createWorkspace(hermes, {
+      name: 'Toolset Failure Workspace',
+      defaultMode: 'profiles',
+      nodes: [
+        {
+          id: 'node-analyze',
+          agentId: analystAgent.agent.id,
+          role: 'worker',
+          label: 'Analyze Dataset',
+          toolsets: ['open_pandas_analysis'],
+          position: { x: 1, y: 1 },
+        },
+      ],
+    });
+
+    let gatewayCalls = 0;
+    const result = await agentStudioService.runWorkspaceTask(hermes, workspace.workspace.id, {
+      task: 'Analyze this attachment.',
+      mode: 'profiles',
+      attachments: {
+        dataset: {
+          fileName: 'notes.pdf',
+          base64: Buffer.from('not-a-dataset', 'utf-8').toString('base64'),
+          mimeType: 'application/pdf',
+        },
+      },
+    }, {
+      openPandasAiService: {
+        startAnalysis: async () => ({ runId: 'should_not_start', status: 'queued' }),
+        getRun: async () => ({ status: 'succeeded' }),
+      },
+      postGatewayChatCompletion: async () => {
+        gatewayCalls += 1;
+        return { choices: [{ message: { content: 'should not run' } }] };
+      },
+    });
+
+    assert.equal(result.success, false);
+    assert.equal(result.status, 'failed');
+    assert.equal(gatewayCalls, 0);
+    assert.equal(result.runs.length, 1);
+    assert.equal(result.runs[0].status, 'failed');
+    assert.equal(result.runs[0].toolsetOutputs[0].toolset, 'open_pandas_analysis');
+    assert.equal(result.runs[0].toolsetOutputs[0].status, 'failed');
+    assert.match(result.runs[0].error, /unsupported(_| )dataset(_| )extension/i);
+  });
+});

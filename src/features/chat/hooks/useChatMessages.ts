@@ -24,6 +24,7 @@ interface UseChatMessagesOptions {
   streaming: boolean;
   setStreaming: SetState<boolean>;
   uploadingImages: boolean;
+  resolvingRefs: boolean;
   voiceState: VoiceState;
   attachmentsCount: number;
   imageAttachments: ImageAttachment[];
@@ -47,6 +48,7 @@ export function useChatMessages({
   streaming,
   setStreaming,
   uploadingImages,
+  resolvingRefs,
   voiceState,
   attachmentsCount,
   imageAttachments,
@@ -75,7 +77,7 @@ export function useChatMessages({
     const draftInput = typeof overrideInput === 'string' ? overrideInput : input;
     const trimmedInput = draftInput.trim();
     const hasNoContent = !trimmedInput && attachmentsCount === 0 && imageAttachments.length === 0;
-    if (hasNoContent || streaming || uploadingImages || voiceState === 'recording' || voiceState === 'processing') return;
+    if (hasNoContent || streaming || uploadingImages || resolvingRefs || voiceState === 'recording' || voiceState === 'processing') return;
 
     if (attachmentsCount === 0 && imageAttachments.length === 0) {
       const handledLocal = await handleLocalCommand(trimmedInput);
@@ -290,6 +292,7 @@ export function useChatMessages({
     setStreaming,
     setUsage,
     streaming,
+    resolvingRefs,
     updateLastAssistantMessage,
     uploadingImages,
     voiceState,

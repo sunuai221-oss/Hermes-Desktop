@@ -16,6 +16,7 @@ import {
   readChatPreference,
   writeChatPreference,
 } from '../features/chat/chatStorage';
+import { createWorkspaceChatSession } from '../features/chat/createWorkspaceChatSession';
 import type { AgentWorkspace } from '../types';
 
 interface Props {
@@ -23,20 +24,10 @@ interface Props {
   requestNonce?: number;
 }
 
-function timestampLabel(date = new Date()) {
-  const pad = (value: number) => String(value).padStart(2, '0');
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-}
-
-function workspaceSessionTitle(workspace: AgentWorkspace | undefined) {
-  const name = String(workspace?.name || 'Workspace').trim() || 'Workspace';
-  return `${name} workspace ${timestampLabel()}`.slice(0, 100);
-}
-
 export function ChatPage({ requestedSessionId = null, requestNonce = 0 }: Props) {
   const gateway = useGatewayContext();
   const { currentProfile } = useProfiles();
-  const sessionStore = useSessions();
+  const { createSession } = useSessions();
   const { status: chatRuntimeStatus } = useRuntimeStatus(gateway);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -85,36 +76,14 @@ export function ChatPage({ requestedSessionId = null, requestNonce = 0 }: Props)
     setWorkspaceImportError('');
     try {
       const response = await api.agentStudio.generatePrompt(selectedWorkspaceId);
-      try {
-        const created = await sessionStore.createSession({
-          source: 'agent-studio-workspace',
-          model: chat.model,
-          title: workspaceSessionTitle(selectedWorkspace),
-          workspace_id: selectedWorkspace?.id,
-          workspace_name: selectedWorkspace?.name,
-        });
-        if (created?.id) {
-          await chat.hydrateSession(String(created.id));
-        } else {
-          chat.handleNewChat();
-        }
-      } catch {
-        try {
-          const created = await sessionStore.createSession({
-            source: 'agent-studio-workspace',
-            model: chat.model,
-            workspace_id: selectedWorkspace?.id,
-            workspace_name: selectedWorkspace?.name,
-          });
-          if (created?.id) {
-            await chat.hydrateSession(String(created.id));
-          } else {
-            chat.handleNewChat();
-          }
-        } catch {
-          chat.handleNewChat();
-        }
-      }
+      await createWorkspaceChatSession({
+        model: chat.model,
+        workspaceId: selectedWorkspace?.id,
+        workspaceName: selectedWorkspace?.name,
+        createSession,
+        hydrateSession: chat.hydrateSession,
+        handleNewChat: chat.handleNewChat,
+      });
       chat.setInput(`${response.data.prompt}\n\n## Task\n`);
     } catch {
       setWorkspaceImportError('Could not import workspace.');

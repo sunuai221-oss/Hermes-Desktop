@@ -16,6 +16,7 @@ const BACKEND_PORT = Number(process.env.HERMES_DESKTOP_BACKEND_PORT || process.e
 
 const gatewayBase = `http://127.0.0.1:${GATEWAY_PORT}`;
 const backendHealthUrl = `http://127.0.0.1:${BACKEND_PORT}/api/desktop/health`;
+const openPandasStatusUrl = `http://127.0.0.1:${BACKEND_PORT}/api/open-pandas-ai/status`;
 
 const checks = [];
 
@@ -85,6 +86,49 @@ async function checkServerDependencies() {
     false,
     'server dependencies are missing',
     'Run `npm run setup`, or `npm run install:server` if root dependencies are already installed.',
+  );
+}
+
+async function checkLiteParsePackaging() {
+  const liteParsePackageJson = path.join(ROOT, 'server', 'node_modules', '@llamaindex', 'liteparse', 'package.json');
+  const platformPackages = new Map([
+    ['darwin-arm64', '@llamaindex/liteparse-darwin-arm64'],
+    ['linux-arm64', '@llamaindex/liteparse-linux-arm64-gnu'],
+    ['linux-x64', '@llamaindex/liteparse-linux-x64-gnu'],
+    ['win32-x64', '@llamaindex/liteparse-win32-x64-msvc'],
+  ]);
+  const platformKey = `${process.platform}-${process.arch}`;
+  const nativePackage = platformPackages.get(platformKey);
+  const nativePackageJson = nativePackage
+    ? path.join(ROOT, 'server', 'node_modules', ...nativePackage.split('/'), 'package.json')
+    : null;
+
+  const hasLiteParseCore = fs.existsSync(liteParsePackageJson);
+  const hasNativeBinding = nativePackageJson ? fs.existsSync(nativePackageJson) : false;
+
+  if (hasLiteParseCore && (!nativePackage || hasNativeBinding)) {
+    const detail = nativePackage
+      ? `LiteParse core + ${nativePackage} detected`
+      : `LiteParse core detected (no platform package mapping for ${platformKey})`;
+    pushCheck('LiteParse packaging', true, detail);
+    return;
+  }
+
+  if (!hasLiteParseCore) {
+    pushCheck(
+      'LiteParse packaging',
+      false,
+      'LiteParse package is missing from server/node_modules',
+      'Run `npm run install:server` on Windows before packaging.',
+    );
+    return;
+  }
+
+  pushCheck(
+    'LiteParse packaging',
+    false,
+    `LiteParse native package is missing for ${platformKey} (${nativePackage || 'unknown'})`,
+    'Reinstall server dependencies on the target Windows architecture (`npm run install:server`).',
   );
 }
 
@@ -160,6 +204,59 @@ async function checkDesktopBackend() {
   }
 }
 
+async function checkOpenPandasHealth() {
+  try {
+    const response = await fetch(openPandasStatusUrl, { method: 'GET' });
+    if (response.status === 404) {
+      pushCheck(
+        'Open_Pandas_AI health',
+        true,
+        'Connector endpoint is not exposed in this backend build (fallback mode still valid).',
+      );
+      return;
+    }
+    if (!response.ok) {
+      pushCheck(
+        'Open_Pandas_AI health',
+        false,
+        `Connector status endpoint returned HTTP ${response.status}`,
+        'Inspect backend logs and confirm /api/open-pandas-ai/status is reachable.',
+      );
+      return;
+    }
+
+    const payload = await response.json();
+    if (payload?.status === 'disabled') {
+      pushCheck(
+        'Open_Pandas_AI health',
+        true,
+        'Connector disabled (Hermes fallback mode active).',
+      );
+      return;
+    }
+    if (payload?.status === 'ready') {
+      pushCheck('Open_Pandas_AI health', true, `Connector ready (${payload.mode || 'cli'})`);
+      return;
+    }
+    const failing = Array.isArray(payload?.checks)
+      ? payload.checks.filter(check => check?.ok === false && check?.required !== false).map(check => check.key)
+      : [];
+    pushCheck(
+      'Open_Pandas_AI health',
+      false,
+      `Connector misconfigured (${failing.join(', ') || 'unknown checks'})`,
+      'Open Data Analysis panel and fix connector path/venv/python settings.',
+    );
+  } catch (error) {
+    pushCheck(
+      'Open_Pandas_AI health',
+      false,
+      `Connector status endpoint unavailable (${error.message})`,
+      'Start the desktop backend then retry this smoke test.',
+    );
+  }
+}
+
 function printReport() {
   console.log('Hermes Desktop smoke report');
   console.log(`Root: ${ROOT}`);
@@ -181,9 +278,11 @@ function printReport() {
 async function main() {
   await checkElectronBinary();
   await checkServerDependencies();
+  await checkLiteParsePackaging();
   await checkWslDistro();
   await checkGatewayHealth();
   await checkDesktopBackend();
+  await checkOpenPandasHealth();
   printReport();
 
   const hasFailure = checks.some(check => !check.ok);

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import * as api from '../../../api';
 import { setDraft } from '../../../features/chat/chatDraftBridge';
 import type { AgentWorkspace, AgentWorkspaceExecutionResult } from '../../../types';
@@ -35,6 +35,8 @@ export function useWorkspaceExecution({
   const [executionResult, setExecutionResult] = useState<AgentWorkspaceExecutionResult | null>(null);
   const [generating, setGenerating] = useState(false);
   const [executing, setExecuting] = useState(false);
+  const [sendingToChat, setSendingToChat] = useState(false);
+  const sendingToChatRef = useRef(false);
   const [copied, setCopied] = useState(false);
 
   const resetExecutionState = useCallback(() => {
@@ -68,27 +70,42 @@ export function useWorkspaceExecution({
   }, [generatedPrompt]);
 
   const sendPromptToChat = useCallback(async () => {
-    if (!activeWorkspace) return;
-    if (canNavigateToChat && !(await canNavigateToChat())) return;
-    let prompt = generatedPrompt;
-    if (!prompt) {
-      const saved = await saveWorkspace();
-      if (!saved) return;
-      const res = await api.agentStudio.generatePrompt(saved.id);
-      prompt = res.data.prompt;
-      setGeneratedPrompt(prompt);
+    if (!activeWorkspace || sendingToChatRef.current) return;
+    sendingToChatRef.current = true;
+    setSendingToChat(true);
+    onError('');
+    clearLibraryError();
+    try {
+      if (canNavigateToChat && !(await canNavigateToChat())) return;
+      let prompt = generatedPrompt;
+      if (!prompt) {
+        const saved = await saveWorkspace();
+        if (!saved) return;
+        const res = await api.agentStudio.generatePrompt(saved.id);
+        prompt = res.data.prompt;
+        setGeneratedPrompt(prompt);
+      }
+      const promptText = String(prompt || '').trim();
+      if (!promptText) {
+        throw new Error('Generated workspace prompt is empty.');
+      }
+      setDraft({
+        text: promptText,
+        source: 'agent-studio-workspaces',
+        metadata: {
+          workspaceId: activeWorkspace.id,
+          workspaceName: activeWorkspace.name,
+          mode: activeWorkspace.defaultMode,
+        },
+      });
+      onNavigateToChat(null);
+    } catch (sendError) {
+      onError(formatError(sendError, 'Could not send workspace prompt to Chat.'));
+    } finally {
+      sendingToChatRef.current = false;
+      setSendingToChat(false);
     }
-    setDraft({
-      text: prompt,
-      source: 'agent-studio-workspaces',
-      metadata: {
-        workspaceId: activeWorkspace.id,
-        workspaceName: activeWorkspace.name,
-        mode: activeWorkspace.defaultMode,
-      },
-    });
-    onNavigateToChat(null);
-  }, [activeWorkspace, canNavigateToChat, generatedPrompt, onNavigateToChat, saveWorkspace]);
+  }, [activeWorkspace, canNavigateToChat, clearLibraryError, generatedPrompt, onError, onNavigateToChat, saveWorkspace]);
 
   const executeWorkspace = useCallback(async () => {
     if (!activeWorkspace) return;
@@ -122,6 +139,7 @@ export function useWorkspaceExecution({
     executionResult,
     generating,
     executing,
+    sendingToChat,
     copied,
     resetExecutionState,
     setGeneratedPrompt,

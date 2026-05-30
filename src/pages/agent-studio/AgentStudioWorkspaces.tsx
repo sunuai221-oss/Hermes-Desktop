@@ -3,7 +3,6 @@ import { DndContext, type DragEndEvent, type Modifier } from '@dnd-kit/core';
 import { restrictToWindowEdges } from '@dnd-kit/modifiers';
 import { ArrowLeftRight, Clock3, FolderKanban, Layers, Loader2, MessageSquare, Pencil, Play, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import * as api from '../../api';
 import { useFeedback } from '../../contexts/FeedbackContext';
 import { useTemplatesLibrary } from '../../features/templates/hooks/useTemplatesLibrary';
 import { useNavigationGuard } from '../../contexts/NavigationGuardContext';
@@ -16,18 +15,12 @@ import { WorkspaceNodeTable } from './components/WorkspaceNodeTable';
 import { WorkspaceRunPanel } from './components/WorkspaceRunPanel';
 import { WorkspaceTemplatePanel } from './components/WorkspaceTemplatePanel';
 import { TeamGallery } from './components/TeamGallery';
-import { resolveTeam } from './teams/teamDefinitions';
-import type { TeamDefinition } from './teams/teamDefinitions';
+import { useWorkspaceAutoConfig } from './hooks/useWorkspaceAutoConfig';
 import { useWorkspaceCrud } from './hooks/useWorkspaceCrud';
 import { useWorkspaceExecution } from './hooks/useWorkspaceExecution';
+import { useTeamWorkspaceCreation } from './hooks/useTeamWorkspaceCreation';
 import type {
-  AgentDefinition,
-  AgentWorkspace,
   AgentWorkspaceExecutionResult,
-  WorkspaceAgentEdge,
-  WorkspaceAutoConfigDiffItem,
-  WorkspaceAutoConfigPlan,
-  WorkspaceAutoConfigPreviewResult,
 } from '../../types';
 
 type WorkspaceTab = 'canvas' | 'interface' | 'runs';
@@ -36,207 +29,25 @@ type AgentStudioWorkspacesProps = {
   onOpenSessionInChat?: (sessionId: string | null) => void;
 };
 
-const WORKSPACE_FIELD_LABELS = {
-  description: 'Description',
-  pipelineBrief: 'Pipeline brief',
-  sharedContext: 'Shared context',
-  commonRules: 'Common rules',
-} as const;
-
-const NODE_FIELD_LABELS = {
-  role: 'Role',
-  label: 'Label',
-  profileName: 'Profile',
-  modelOverride: 'Model',
-  skills: 'Skills',
-  toolsets: 'Toolsets',
-} as const;
-
-function hasOwn(value: unknown, key: string) {
-  return Object.prototype.hasOwnProperty.call(value || {}, key);
-}
-
-function formatDiffValue(value: unknown) {
-  if (Array.isArray(value)) return value.length ? value.join(', ') : '(empty)';
-  const text = String(value ?? '').trim();
-  return text || '(empty)';
-}
-
-function valuesEqual(left: unknown, right: unknown) {
-  return formatDiffValue(left) === formatDiffValue(right);
-}
-
-function sanitizeEdgeIdPart(value: string) {
-  return value.replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'node';
-}
-
-function makeAutoConfigEdgeId(edge: Omit<WorkspaceAgentEdge, 'id'>, index: number) {
-  return [
-    'edge_auto',
-    String(index),
-    sanitizeEdgeIdPart(edge.fromNodeId),
-    sanitizeEdgeIdPart(edge.toNodeId),
-    sanitizeEdgeIdPart(edge.kind),
-  ].join('_');
-}
-
-function edgeSignature(edge: Omit<WorkspaceAgentEdge, 'id'>) {
-  return [
-    edge.fromNodeId,
-    edge.toNodeId,
-    edge.kind,
-    String(edge.template || '').trim(),
-  ].join('::');
-}
-
-function edgeSetSignature(edges: Array<Omit<WorkspaceAgentEdge, 'id'>>) {
-  return edges.map(edgeSignature).sort().join('|');
-}
-
-function getWorkspaceNodeLabel(node: AgentWorkspace['nodes'][number], agentsById: Map<string, AgentDefinition>) {
-  return node.label || agentsById.get(node.agentId)?.name || node.id;
-}
-
-function formatEdgeForDiff(
-  edge: Omit<WorkspaceAgentEdge, 'id'>,
-  nodesById: Map<string, AgentWorkspace['nodes'][number]>,
-  agentsById: Map<string, AgentDefinition>,
-) {
-  const from = nodesById.get(edge.fromNodeId);
-  const to = nodesById.get(edge.toNodeId);
-  const fromLabel = from ? getWorkspaceNodeLabel(from, agentsById) : edge.fromNodeId;
-  const toLabel = to ? getWorkspaceNodeLabel(to, agentsById) : edge.toNodeId;
-  const template = String(edge.template || '').trim();
-  return template
-    ? `${fromLabel} -> ${toLabel} (${edge.kind}) - ${template}`
-    : `${fromLabel} -> ${toLabel} (${edge.kind})`;
-}
-
-function buildWorkspaceAutoConfigPlan(
-  workspace: AgentWorkspace,
-  preview: WorkspaceAutoConfigPreviewResult,
-  agentsById: Map<string, AgentDefinition>,
-): WorkspaceAutoConfigPlan {
-  const suggestion = preview.suggestion;
-  const workspacePatch = suggestion.workspacePatch || {};
-  const items: WorkspaceAutoConfigDiffItem[] = [];
-  const nodesById = new Map(workspace.nodes.map(node => [node.id, node] as const));
-  const patch: WorkspaceAutoConfigPlan['patch'] = {
-    nodes: workspace.nodes,
-    edges: workspace.edges || [],
-  };
-
-  for (const field of Object.keys(WORKSPACE_FIELD_LABELS) as Array<keyof typeof WORKSPACE_FIELD_LABELS>) {
-    if (!hasOwn(workspacePatch, field)) continue;
-    const nextValue = workspacePatch[field];
-    if (valuesEqual(workspace[field], nextValue)) continue;
-    patch[field] = nextValue;
-    items.push({
-      id: `workspace:${field}`,
-      category: 'workspace',
-      title: WORKSPACE_FIELD_LABELS[field],
-      before: formatDiffValue(workspace[field]),
-      after: formatDiffValue(nextValue),
-    });
-  }
-
-  if (hasOwn(workspacePatch, 'defaultMode') && !valuesEqual(workspace.defaultMode, workspacePatch.defaultMode)) {
-    patch.defaultMode = workspacePatch.defaultMode;
-    items.push({
-      id: 'workspace:defaultMode',
-      category: 'mode',
-      title: 'Execution mode',
-      before: formatDiffValue(workspace.defaultMode),
-      after: formatDiffValue(workspacePatch.defaultMode),
-    });
-  }
-
-  const nodePatchesById = new Map((suggestion.nodes || []).map(nodePatch => [nodePatch.nodeId, nodePatch] as const));
-  const nodes = workspace.nodes.map(node => {
-    const nodePatch = nodePatchesById.get(node.id);
-    if (!nodePatch) return node;
-
-    let nextNode = node;
-    for (const field of Object.keys(NODE_FIELD_LABELS) as Array<keyof typeof NODE_FIELD_LABELS>) {
-      if (!hasOwn(nodePatch, field)) continue;
-      const nextValue = nodePatch[field];
-      if (valuesEqual(node[field], nextValue)) continue;
-      nextNode = { ...nextNode, [field]: nextValue };
-      items.push({
-        id: `node:${node.id}:${field}`,
-        category: 'node',
-        title: `${getWorkspaceNodeLabel(node, agentsById)}: ${NODE_FIELD_LABELS[field]}`,
-        before: formatDiffValue(node[field]),
-        after: formatDiffValue(nextValue),
-      });
-    }
-
-    return nextNode;
-  });
-  patch.nodes = nodes;
-
-  const suggestedEdges = suggestion.edges || [];
-  let edges = workspace.edges || [];
-  if (suggestedEdges.length > 0) {
-    const nextEdges = suggestedEdges.map((edge, index) => ({
-      id: makeAutoConfigEdgeId(edge, index),
-      fromNodeId: edge.fromNodeId,
-      toNodeId: edge.toNodeId,
-      kind: edge.kind,
-      ...(edge.template ? { template: edge.template } : {}),
-    }));
-    const currentSignature = edgeSetSignature(edges);
-    const nextSignature = edgeSetSignature(nextEdges);
-
-    if (currentSignature !== nextSignature) {
-      edges = nextEdges;
-      items.push({
-        id: 'edges:replace',
-        category: 'edge',
-        title: 'Relations',
-        before: `${workspace.edges?.length || 0} current relation(s)`,
-        after: `${nextEdges.length} suggested relation(s)`,
-        detail: 'Existing relations will be replaced by the preview.',
-      });
-      nextEdges.forEach((edge, index) => {
-        items.push({
-          id: `edge:${index}:${edgeSignature(edge)}`,
-          category: 'edge',
-          title: `Suggested relation ${index + 1}`,
-          after: formatEdgeForDiff(edge, nodesById, agentsById),
-        });
-      });
-    }
-  }
-  patch.edges = edges;
-
-  return {
-    patch,
-    nextWorkspace: {
-      ...workspace,
-      ...patch,
-      updatedAt: new Date().toISOString(),
-    },
-    items,
-    hasChanges: items.length > 0,
-  };
-}
-
 export function AgentStudioWorkspaces({ onOpenSessionInChat }: AgentStudioWorkspacesProps) {
   const navigate = useNavigate();
   const { confirm } = useFeedback();
   const { registerGuard } = useNavigationGuard();
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const [workspaceMode, setWorkspaceMode] = useState<'quick' | 'advanced'>('quick');
-  const [creatingFromTeam, setCreatingFromTeam] = useState(false);
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('canvas');
   const [viewMode, setViewMode] = useState<'canvas' | 'table'>('canvas');
   const [canvasZoom, setCanvasZoom] = useState(1);
-  const canvasZoomRef = useRef(1);
-  canvasZoomRef.current = canvasZoom;
-  const [autoConfigBusy, setAutoConfigBusy] = useState(false);
-  const [autoConfigPreview, setAutoConfigPreview] = useState<WorkspaceAutoConfigPreviewResult | null>(null);
+  const canvasZoomRef = useRef(canvasZoom);
+  const canvasPanRef = useRef({ x: 0, y: 0 });
+  const handleCanvasPanChange = useCallback((pan: { x: number; y: number }) => {
+    canvasPanRef.current = pan;
+  }, []);
   const resetExecutionStateRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    canvasZoomRef.current = canvasZoom;
+  }, [canvasZoom]);
 
   const {
     templates: agents,
@@ -263,7 +74,6 @@ export function AgentStudioWorkspaces({ onOpenSessionInChat }: AgentStudioWorksp
 
   const handleWorkspaceContextReset = useCallback(() => {
     resetExecutionStateRef.current();
-    setAutoConfigPreview(null);
     setActiveTab('canvas');
   }, []);
 
@@ -309,6 +119,7 @@ export function AgentStudioWorkspaces({ onOpenSessionInChat }: AgentStudioWorksp
     executionResult,
     generating,
     executing,
+    sendingToChat,
     copied,
     resetExecutionState,
     generatePrompt,
@@ -375,6 +186,36 @@ export function AgentStudioWorkspaces({ onOpenSessionInChat }: AgentStudioWorksp
     });
   }, [activeWorkspaceDirty, confirm, unsavedMessage]);
 
+  const switchWorkspaceModeSafely = useCallback(async (
+    nextMode: 'quick' | 'advanced',
+    action: string,
+  ) => {
+    if (workspaceMode === nextMode) return true;
+    const canSwitch = await confirmUnsavedChanges(action);
+    if (!canSwitch) return false;
+    setWorkspaceMode(nextMode);
+    return true;
+  }, [confirmUnsavedChanges, workspaceMode]);
+
+  const {
+    creatingFromTeam,
+    createFromTeam,
+  } = useTeamWorkspaceCreation({
+    confirm,
+    confirmUnsavedChanges,
+    discardActiveWorkspaceChanges,
+    clearLibraryError,
+    loadTemplates,
+    createWorkspace,
+    switchWorkspaceModeSafely,
+    onError: message => setError(message),
+    onWorkspaceCreated: () => {
+      setActiveTab('canvas');
+      setViewMode('canvas');
+      setSelectedEdgeId(null);
+    },
+  });
+
   const openWorkspaceRunInChat = useCallback(async (sessionId: string) => {
     if (!sessionId) return;
     const canOpen = await confirmUnsavedChanges('open Chat');
@@ -400,93 +241,44 @@ export function AgentStudioWorkspaces({ onOpenSessionInChat }: AgentStudioWorksp
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [activeWorkspaceDirty]);
 
-  const clearAutoConfigPreview = useCallback(() => {
-    setAutoConfigPreview(null);
-  }, []);
-
-  const autoConfigPlan = useMemo(
-    () => (activeWorkspace && autoConfigPreview
-      ? buildWorkspaceAutoConfigPlan(activeWorkspace, autoConfigPreview, agentsById)
-      : null),
-    [activeWorkspace, agentsById, autoConfigPreview],
-  );
-
-  const generateAutoConfig = useCallback(async () => {
-    if (!activeWorkspace) return;
-    clearAutoConfigPreview();
-    setAutoConfigBusy(true);
-    setError('');
-    clearLibraryError();
-    try {
-      const saved = await saveWorkspace();
-      if (!saved) return;
-      const pipelineBrief = String(saved.pipelineBrief || '').trim();
-      if (!pipelineBrief) {
-        setError('Pipeline brief is required before auto-configuration.');
-        return;
-      }
-      const response = await api.agentStudio.autoConfigWorkspace(saved.id, { pipelineBrief });
-      setAutoConfigPreview(response.data);
-    } catch (previewError) {
-      clearAutoConfigPreview();
-      if (typeof previewError === 'object' && previewError && 'response' in previewError) {
-        const response = (previewError as { response?: { data?: { error?: string; details?: string } } }).response;
-        setError(response?.data?.error || response?.data?.details || 'Could not auto-configure workspace.');
-      } else if (previewError instanceof Error) {
-        setError(previewError.message);
-      } else {
-        setError('Could not auto-configure workspace.');
-      }
-    } finally {
-      setAutoConfigBusy(false);
-    }
-  }, [activeWorkspace, clearAutoConfigPreview, clearLibraryError, saveWorkspace, setError]);
-
-  const applyAutoConfig = useCallback(async (saveAfterApply = false) => {
-    if (!autoConfigPlan?.hasChanges) return;
-
-    if (saveAfterApply) {
-      const saved = await saveWorkspaceDraft(autoConfigPlan.nextWorkspace);
-      if (saved) clearAutoConfigPreview();
-      return;
-    }
-
-    patchActiveWorkspace(autoConfigPlan.patch);
-    clearAutoConfigPreview();
-  }, [autoConfigPlan, clearAutoConfigPreview, patchActiveWorkspace, saveWorkspaceDraft]);
-
-  const patchWorkspaceAndInvalidatePreview = useCallback((patch: Partial<AgentWorkspace>) => {
-    clearAutoConfigPreview();
-    patchActiveWorkspace(patch);
-  }, [clearAutoConfigPreview, patchActiveWorkspace]);
-
-  const patchNodeAndInvalidatePreview = useCallback((patch: Partial<AgentWorkspace['nodes'][number]>) => {
-    clearAutoConfigPreview();
-    patchSelectedNode(patch);
-  }, [clearAutoConfigPreview, patchSelectedNode]);
-
-  const removeNodeAndInvalidatePreview = useCallback((nodeId: string) => {
-    clearAutoConfigPreview();
-    removeNode(nodeId);
-  }, [clearAutoConfigPreview, removeNode]);
-
-  const addEdgeAndInvalidatePreview = useCallback((fromNodeId: string, toNodeId: string, kind?: AgentWorkspace['edges'][number]['kind']) => {
-    clearAutoConfigPreview();
-    addEdge(fromNodeId, toNodeId, kind);
-  }, [addEdge, clearAutoConfigPreview]);
-
-  const removeEdgeAndInvalidatePreview = useCallback((edgeId: string) => {
-    clearAutoConfigPreview();
-    removeEdge(edgeId);
-  }, [clearAutoConfigPreview, removeEdge]);
+  const {
+    autoConfigBusy,
+    autoConfigPreview,
+    autoConfigPlan,
+    clearAutoConfigPreview,
+    invalidateAutoConfigPreview,
+    generateAutoConfig,
+    applyAutoConfigPreview,
+    applyAndSaveAutoConfigPreview,
+    patchWorkspaceAndInvalidatePreview,
+    patchNodeAndInvalidatePreview,
+    removeNodeAndInvalidatePreview,
+    addEdgeAndInvalidatePreview,
+    removeEdgeAndInvalidatePreview,
+  } = useWorkspaceAutoConfig({
+    activeWorkspace,
+    agentsById,
+    saveWorkspace,
+    saveWorkspaceDraft,
+    patchActiveWorkspace,
+    patchSelectedNode,
+    removeNode,
+    addEdge,
+    removeEdge,
+    clearLibraryError,
+    onError: message => setError(message),
+  });
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const dragData = event.active.data.current as { type?: string } | undefined;
     const mayChangeWorkspace = dragData?.type === 'workspace-node'
       || (dragData?.type === 'library-agent' && event.over?.id === 'workspace-canvas');
-    if (mayChangeWorkspace) clearAutoConfigPreview();
-    handleWorkspaceDragEnd(event, agentsById, canvasRef, canvasZoomRef.current);
-  }, [agentsById, clearAutoConfigPreview, handleWorkspaceDragEnd]);
+    if (mayChangeWorkspace) invalidateAutoConfigPreview();
+    handleWorkspaceDragEnd(event, agentsById, canvasRef, {
+      zoom: canvasZoomRef.current,
+      pan: canvasPanRef.current,
+    });
+  }, [agentsById, handleWorkspaceDragEnd, invalidateAutoConfigPreview]);
 
   const selectWorkspaceSafely = useCallback(async (id: string) => {
     if (id === activeWorkspaceId) return;
@@ -502,115 +294,6 @@ export function AgentStudioWorkspaces({ onOpenSessionInChat }: AgentStudioWorksp
     discardActiveWorkspaceChanges();
     await createWorkspace();
   }, [confirmUnsavedChanges, createWorkspace, discardActiveWorkspaceChanges]);
-
-  const createFromTeam = useCallback(async (team: TeamDefinition) => {
-    const canCreate = await confirmUnsavedChanges('create a workspace from a team');
-    if (!canCreate) return;
-
-    const confirmedCreate = await confirm({
-      title: 'Create team workspace',
-      message: `Create "${team.name}" as a saved workspace?\n\nThis is useful for testing, and you can delete it afterwards from Quick Start or Advanced mode.`,
-      confirmLabel: 'Create workspace',
-      cancelLabel: 'Cancel',
-    });
-    if (!confirmedCreate) return;
-
-    discardActiveWorkspaceChanges();
-
-    setCreatingFromTeam(true);
-    setError('');
-    clearLibraryError();
-
-    try {
-      // Load templates if not already loaded
-      const result = await loadTemplates();
-      if (!result.ok) {
-        setError(result.error || 'Could not load agent templates.');
-        return;
-      }
-
-      // Resolve the team: match agents by name
-      const resolved = resolveTeam(team, result.ok ? result.templates : []);
-
-      if (resolved.missingAgents.length > 0) {
-        setError(
-          `Certains agents sont introuvables : ${resolved.missingAgents.join(', ')}. ` +
-          'Utilise "Load bundled" ou "Import default agency" dans la bibliothèque de templates.',
-        );
-        return;
-      }
-
-      if (resolved.ambiguousAgents.length > 0) {
-        const ambiguityDetails = resolved.ambiguousAgents
-          .map(entry => {
-            const candidates = entry.matches
-              .map(match => {
-                const parts = [
-                  match.name,
-                  match.source || 'template',
-                  match.sourcePath || match.slug || match.id,
-                ].filter(Boolean);
-                return parts.join(' · ');
-              })
-              .join(' | ');
-            return `${entry.agentName}: ${candidates}`;
-          })
-          .join('; ');
-
-        setError(
-          `Certains agents sont ambigus : ${ambiguityDetails}. ` +
-          'Renomme, désambiguïse ou supprime les doublons de templates avant de créer cette équipe.',
-        );
-        return;
-      }
-
-      // Build the workspace payload
-      const draft: Partial<AgentWorkspace> = {
-        name: resolved.name,
-        description: resolved.description,
-        pipelineBrief: resolved.pipelineBrief,
-        sharedContext: resolved.sharedContext,
-        commonRules: resolved.commonRules,
-        defaultMode: resolved.defaultMode,
-        nodes: resolved.nodes.map((n) => ({
-          id: n.id,
-          agentId: n.agentId,
-          role: n.role,
-          label: n.label,
-          modelOverride: n.modelOverride || '',
-          skills: n.skills || [],
-          toolsets: n.toolsets || [],
-          position: n.position,
-        })),
-        edges: resolved.edges.map((e) => ({
-          id: `edge_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
-          fromNodeId: e.fromNodeId,
-          toNodeId: e.toNodeId,
-          kind: e.kind,
-        })),
-      };
-
-      const newWorkspace = await createWorkspace(draft);
-      if (!newWorkspace) return;
-
-      // Create through the workspace hook so local state and the advanced canvas stay in sync.
-      setWorkspaceMode('advanced');
-      setActiveTab('canvas');
-      setViewMode('canvas');
-      setSelectedEdgeId(null);
-    } catch (createError) {
-      if (typeof createError === 'object' && createError && 'response' in createError) {
-        const response = (createError as { response?: { data?: { error?: string; details?: string } } }).response;
-        setError(response?.data?.error || response?.data?.details || 'Could not create workspace from team.');
-      } else if (createError instanceof Error) {
-        setError(createError.message);
-      } else {
-        setError('Could not create workspace from team.');
-      }
-    } finally {
-      setCreatingFromTeam(false);
-    }
-  }, [confirm, confirmUnsavedChanges, createWorkspace, discardActiveWorkspaceChanges, loadTemplates, clearLibraryError, setError]);
 
   const deleteWorkspaceSafely = useCallback(async () => {
     if (!activeWorkspace) return;
@@ -642,24 +325,23 @@ export function AgentStudioWorkspaces({ onOpenSessionInChat }: AgentStudioWorksp
     setActiveTab(tab);
   }, [activeTab, confirmUnsavedChanges]);
 
-  const openQuickWorkspaceEditor = useCallback(() => {
-    setWorkspaceMode('advanced');
+  const openQuickWorkspaceEditor = useCallback(async () => {
+    const canOpen = await switchWorkspaceModeSafely('advanced', 'open Advanced mode');
+    if (!canOpen) return;
     setActiveTab('canvas');
     setViewMode('canvas');
-  }, []);
+  }, [switchWorkspaceModeSafely]);
 
   const openQuickStart = useCallback(async () => {
-    const canOpen = await confirmUnsavedChanges('return to Quick Start');
+    const canOpen = await switchWorkspaceModeSafely('quick', 'return to Quick Start');
     if (!canOpen) return;
-    setWorkspaceMode('quick');
-  }, [confirmUnsavedChanges]);
+  }, [switchWorkspaceModeSafely]);
 
   const openQuickWorkspaceInterface = useCallback(async () => {
-    const canOpen = await confirmUnsavedChanges('open the task runner');
+    const canOpen = await switchWorkspaceModeSafely('advanced', 'open the task runner');
     if (!canOpen) return;
-    setWorkspaceMode('advanced');
     setActiveTab('interface');
-  }, [confirmUnsavedChanges]);
+  }, [switchWorkspaceModeSafely]);
 
   const templatePanelProps = {
     title: 'Templates',
@@ -731,7 +413,12 @@ export function AgentStudioWorkspaces({ onOpenSessionInChat }: AgentStudioWorksp
             )}
             {/* Toggle Quick / Advanced */}
             <button
-              onClick={() => setWorkspaceMode(current => current === 'quick' ? 'advanced' : 'quick')}
+              onClick={() => {
+                void switchWorkspaceModeSafely(
+                  workspaceMode === 'quick' ? 'advanced' : 'quick',
+                  workspaceMode === 'quick' ? 'open Advanced mode' : 'return to Quick Start',
+                );
+              }}
               className={cn(
                 'inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-all',
                 workspaceMode === 'quick'
@@ -949,6 +636,7 @@ export function AgentStudioWorkspaces({ onOpenSessionInChat }: AgentStudioWorksp
                   canvasRef={canvasRef}
                   canvasZoom={canvasZoom}
                   onCanvasZoomChange={setCanvasZoom}
+                  onCanvasPanChange={handleCanvasPanChange}
                   workspace={activeWorkspace}
                   agentsById={agentsById}
                   selectedNodeId={selectedNodeId}
@@ -957,6 +645,7 @@ export function AgentStudioWorkspaces({ onOpenSessionInChat }: AgentStudioWorksp
                   generatedPrompt={generatedPrompt}
                   onSelectEdge={setSelectedEdgeId}
                   copied={copied}
+                  sendingToChat={sendingToChat}
                   onSelectNode={(id) => { setSelectedNodeId(id); setSelectedEdgeId(null); }}
                   onRemoveNode={removeNodeAndInvalidatePreview}
                   onAddEdge={addEdgeAndInvalidatePreview}
@@ -977,10 +666,10 @@ export function AgentStudioWorkspaces({ onOpenSessionInChat }: AgentStudioWorksp
                     void generateAutoConfig();
                   }}
                   onApplyAutoConfig={() => {
-                    void applyAutoConfig(false);
+                    void applyAutoConfigPreview();
                   }}
                   onApplyAndSaveAutoConfig={() => {
-                    void applyAutoConfig(true);
+                    void applyAndSaveAutoConfigPreview();
                   }}
                   onDiscardAutoConfig={clearAutoConfigPreview}
                 />
@@ -1020,6 +709,7 @@ export function AgentStudioWorkspaces({ onOpenSessionInChat }: AgentStudioWorksp
             copied={copied}
             generating={generating}
             executing={executing}
+            sendingToChat={sendingToChat}
             executionResult={executionResult}
             onGeneratePrompt={() => {
               void generatePrompt();

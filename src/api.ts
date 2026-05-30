@@ -15,6 +15,10 @@ import type {
   Message,
   ModelThinkMode,
   OllamaModel,
+  OpenPandasAiRunResponse,
+  OpenPandasAiRunStartResponse,
+  OpenPandasAiLogsResponse,
+  OpenPandasAiStatusResponse,
   PawrtalCommandResult,
   PawrtalCompanion,
   PawrtalStatusResponse,
@@ -71,6 +75,22 @@ type WorkspaceTaskRunPayload = {
   task: string;
   mode?: AgentWorkspace['defaultMode'];
   model?: string;
+  analysisQuestion?: string;
+  attachments?: {
+    document?: {
+      fileName: string;
+      base64?: string;
+      dataUrl?: string;
+      mimeType?: string;
+    };
+    dataset?: {
+      fileName: string;
+      base64?: string;
+      dataUrl?: string;
+      mimeType?: string;
+    };
+  };
+  toolsetOptions?: Record<string, unknown>;
 };
 
 type WorkspaceAutoConfigPayload = {
@@ -89,6 +109,7 @@ const http = axios.create({ baseURL: BASE, timeout: 5000 });
 const voiceHttp = axios.create({ baseURL: BASE, timeout: 180000 });
 const scanHttp = axios.create({ baseURL: BASE, timeout: 60000 });
 const diagnosticsHttp = axios.create({ baseURL: BASE, timeout: 240000 });
+const openPandasHttp = axios.create({ baseURL: BASE, timeout: 900000 });
 const DEFAULT_DIAGNOSTICS_TIMEOUT_MS = 180000;
 
 function attachProfileHeaderInterceptor(client: ReturnType<typeof axios.create>) {
@@ -131,6 +152,7 @@ attachProfileHeaderInterceptor(http);
 attachProfileHeaderInterceptor(voiceHttp);
 attachProfileHeaderInterceptor(scanHttp);
 attachProfileHeaderInterceptor(diagnosticsHttp);
+attachProfileHeaderInterceptor(openPandasHttp);
 
 function diagnosticsCommand(path: string, timeoutMs = DEFAULT_DIAGNOSTICS_TIMEOUT_MS) {
   const commandTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0
@@ -320,6 +342,30 @@ export const kanban = {
 export const config = {
   get: () => http.get('/api/config'),
   save: (data: HermesConfig) => http.post('/api/config', data),
+};
+
+export const openPandasAi = {
+  status: () => http.get<OpenPandasAiStatusResponse>('/api/open-pandas-ai/status'),
+  analyze: (payload: {
+    question: string;
+    dataset: {
+      fileName: string;
+      base64?: string;
+      dataUrl?: string;
+      mimeType?: string;
+    };
+    document?: {
+      fileName: string;
+      base64?: string;
+      dataUrl?: string;
+      mimeType?: string;
+    };
+    options?: Record<string, unknown>;
+  }) => openPandasHttp.post<OpenPandasAiRunStartResponse>('/api/open-pandas-ai/analyze', payload),
+  run: (runId: string) =>
+    http.get<OpenPandasAiRunResponse>(`/api/open-pandas-ai/runs/${encodeURIComponent(runId)}`),
+  logs: (lines = 200) =>
+    http.get<OpenPandasAiLogsResponse>('/api/open-pandas-ai/logs', { params: { lines } }),
 };
 
 export const sessions = {

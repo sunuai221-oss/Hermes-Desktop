@@ -6,6 +6,32 @@ Repo: `/mnt/c/Users/<user>/.hermes/hermes-builder`
 > Ce backlog découpe le plan de refactor en lots exécutables, incrémentaux, vérifiables, avec surface de changement limitée.
 > Stratégie: safe/strangler refactor, façade publique stable, vérification après chaque lot.
 
+## Actualisation 2026-05-28
+
+Ce backlog reste utile comme historique de découpage, mais plusieurs lots ont
+déjà été réalisés ou rendus obsolètes par l'évolution du code.
+
+Pour les prochains lots frontend, utiliser aussi
+`docs/architecture/hermes-desktop-frontend-responsibility-boundaries.md` comme
+contrat de découpage: il précise ce qui doit rester page shell, feature hook,
+composant présentational ou helper pur.
+
+| Lot | Statut actuel | Note |
+| --- | --- | --- |
+| LOT 0 | Réalisé | Les docs de garde-fous existent et ont été rafraîchies. |
+| LOT 1 | Partiellement réalisé | `useTemplatesLibrary` et `TemplatesLibraryPanel` existent; vérifier qu'il ne reste plus de logique library métier dupliquée dans les pages. |
+| LOT 2 | Réalisé | `runtimeStatus.ts` existe et `ProfileProvider` ne porte plus la logique de polling gateway. |
+| LOT 3 | Réalisé/obsolète | `SoulPage`, `profiles.list()` et `/api/agents` ne sont plus présents dans l'arbre courant. |
+| LOT 4 | Partiellement réalisé | `/api/agents` est retiré; `/api/gateway/status` et `/api/kanban/diagnostics` restent des surfaces legacy/diagnostic à documenter ou réduire. |
+| LOT 5 | Réalisé | `chatDraftBridge.ts` existe; les clés `hermes-chat-draft` restent un détail interne de compatibilité. |
+| LOT 6 | Réalisé | `useChat.ts` est déjà éclaté en sous-hooks spécialisés; il reste surtout à surveiller la taille de la façade. |
+| LOT 7 | Réalisé en grande partie | Agent Studio est découpé en panneaux et hooks; rester attentif à l'orchestration centrale. |
+| LOT 8 | Ouvert | `KanbanPage.tsx` reste une grosse surface à découper. |
+| LOT 9 | Ouvert | `ConfigPage.tsx` reste une grosse surface à découper. |
+| LOT 10 | Ouvert | `server/index.mjs` reste un point d'entrée/backend bootstrap massif. |
+| LOT 11 | Ouvert | La simplification context/provider reste une décision de lisibilité. |
+| LOT 12 | Ouvert | La navigation produit peut encore être clarifiée. |
+
 ## Convention d’exécution
 
 Pour chaque lot:
@@ -76,6 +102,12 @@ Créer:
 
 ## LOT 1 — Unifier la template library
 
+Statut 2026-05-28: partiellement réalisé. Les modules
+`src/features/templates/hooks/useTemplatesLibrary.ts` et
+`src/features/templates/components/TemplatesLibraryPanel.tsx` existent déjà.
+La suite logique est une passe de vérification pour supprimer les derniers
+doublons métier éventuels dans `TemplatesPage` et `AgentStudioWorkspaces`.
+
 ### Objectif
 Supprimer la duplication majeure entre `TemplatesPage` et `AgentStudioWorkspaces`.
 
@@ -126,6 +158,10 @@ Commandes/recherches:
 ---
 
 ## LOT 2 — Unifier la source de vérité runtime/gateway
+
+Statut 2026-05-28: réalisé. La normalisation runtime est centralisée dans
+`src/features/runtime/runtimeStatus.ts`, et `ProfileProvider` est recentré sur
+les profils.
 
 ### Objectif
 Supprimer la duplication de logique runtime entre `ProfileProvider` et `useGateway`.
@@ -182,6 +218,10 @@ Modifier:
 
 ## LOT 3 — Nettoyer les alias API et legacy frontend
 
+Statut 2026-05-28: réalisé/obsolète. `SoulPage`, `profiles.list()` et la route
+frontend/backend `/api/agents` mentionnés ici ne sont plus présents dans le
+code courant. Conserver cette section comme trace de dette déjà traitée.
+
 ### Objectif
 Réduire la surface inutile côté frontend et supprimer les reliquats évidents.
 
@@ -223,6 +263,10 @@ Modifier:
 ---
 
 ## LOT 4 — Assainir les routes backend orphelines/legacy
+
+Statut 2026-05-28: partiellement réalisé. `/api/agents` n'est plus monté dans
+le code courant. Les surfaces encore à clarifier sont surtout
+`/api/gateway/status` et `/api/kanban/diagnostics`.
 
 ### Objectif
 Réduire la surface backend exposée qui n’a pas de consommateur clair.
@@ -275,6 +319,12 @@ Modifier:
 
 ## LOT 5 — Remplacer le bridge implicite localStorage → Chat
 
+Statut 2026-05-28: réalisé. `src/features/chat/chatDraftBridge.ts` porte le
+contrat explicite `setDraft` / `consumeDraft`. Les chaînes
+`hermes-chat-draft` et `hermes-chat-draft-ts` peuvent encore apparaître comme
+détail de stockage interne, mais les pages produit ne doivent pas manipuler ces
+clés directement.
+
 ### Objectif
 Rendre explicite le passage de draft vers le chat.
 
@@ -319,6 +369,11 @@ Modifier:
 ---
 
 ## LOT 6 — Éclater useChat.ts en sous-hooks
+
+Statut 2026-05-28: réalisé. Les sous-hooks `useChatSession`,
+`useChatMessages`, `useChatUploads`, `useChatAudio`, `useChatContextFiles`,
+`useChatDraft` et autres helpers existent déjà. La suite est de garder
+`useChat.ts` comme façade stable et d'éviter qu'elle redevienne un monolithe.
 
 ### Objectif
 Transformer `useChat.ts` en façade orchestratrice stable et réduire le monolithe.
@@ -368,6 +423,12 @@ Modifier:
 ---
 
 ## LOT 7 — Éclater AgentStudioWorkspaces.tsx
+
+Statut 2026-05-28: réalisé en grande partie. Les panneaux
+`WorkspaceListPanel`, `WorkspaceEditorPanel`, `WorkspaceRunPanel`,
+`WorkspaceTemplatePanel`, `WorkspaceInterfacePanel` et les hooks
+`useWorkspaceCrud` / `useWorkspaceExecution` existent déjà. Le travail restant
+est surtout de maintenir une orchestration lisible.
 
 ### Objectif
 Transformer la page monolithe en assemblage de panneaux et hooks spécialisés.
