@@ -47,7 +47,7 @@ export function extractVoiceAudioFileName(audioUrl: string): string | null {
   }
 }
 
-export async function convertDataUrlToPng(dataUrl: string): Promise<{ dataUrl: string; width: number; height: number }> {
+async function convertDataUrlToPng(dataUrl: string): Promise<{ dataUrl: string; width: number; height: number }> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
@@ -67,7 +67,7 @@ export async function convertDataUrlToPng(dataUrl: string): Promise<{ dataUrl: s
   });
 }
 
-export async function readImageDimensions(dataUrl: string): Promise<{ width: number; height: number }> {
+async function readImageDimensions(dataUrl: string): Promise<{ width: number; height: number }> {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });

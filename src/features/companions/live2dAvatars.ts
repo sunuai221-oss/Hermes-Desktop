@@ -82,7 +82,3 @@ export const DEFAULT_LIVE2D_AVATAR_ID: Live2DAvatarId = 'shizuku';
 export function getLive2DAvatarDefinition(id: string | null | undefined) {
   return LIVE2D_AVATARS.find(avatar => avatar.id === id) || LIVE2D_AVATARS[0];
 }
-
-export function isCubism4Model(modelUrl: string): boolean {
-  return modelUrl.toLowerCase().endsWith('.model3.json');
-}

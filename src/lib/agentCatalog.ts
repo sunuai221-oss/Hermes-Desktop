@@ -9,7 +9,7 @@ function compareStrings(a: string, b: string) {
   return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
 }
 
-export function humanizeCatalogSegment(value?: string) {
+function humanizeCatalogSegment(value?: string) {
   return String(value || '')
     .split(/[-_/]+/)
     .filter(Boolean)

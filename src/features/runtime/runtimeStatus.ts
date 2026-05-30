@@ -23,7 +23,7 @@ export function normalizeGatewayProcessStatus(status: ProcessStatusInput | null 
   return { ...status, status: normalizedStatus };
 }
 
-export function deriveRuntimeStatus({
+function deriveRuntimeStatus({
   builderStatus,
   gatewayHealth,
   directGatewayHealth,

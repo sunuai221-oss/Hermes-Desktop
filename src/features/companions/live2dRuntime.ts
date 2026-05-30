@@ -264,4 +264,3 @@ class Live2DRuntimeManager {
 }
 
 export { Live2DRuntimeManager };
-export type { ViewInstance };

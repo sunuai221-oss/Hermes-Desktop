@@ -159,7 +159,7 @@ export function getAvailableSkillNames(skills: SkillInfo[]) {
   )).sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
 }
 
-export function scoreSkillForAgent(agent: AgentDefinition, skill: SkillInfo) {
+function scoreSkillForAgent(agent: AgentDefinition, skill: SkillInfo) {
   if (!isSuggestableSkill(skill)) return Number.NEGATIVE_INFINITY;
 
   const fullAgentText = normalize(agentText(agent));

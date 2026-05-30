@@ -2,7 +2,7 @@ import type { ChatToolCall, ChatUsage } from '../types';
 
 type JsonRecord = Record<string, unknown>;
 
-export interface ParsedSseMessage {
+interface ParsedSseMessage {
   event: string | null;
   rawData: string;
   done: boolean;
@@ -29,7 +29,7 @@ export function parseSseChunk(buffer: string, chunk: string): ParsedSseChunk {
   return { events, buffer: rest };
 }
 
-export function splitSseBlocks(source: string): { blocks: string[]; rest: string } {
+function splitSseBlocks(source: string): { blocks: string[]; rest: string } {
   const normalized = String(source || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const blocks: string[] = [];
   let cursor = 0;
@@ -47,7 +47,7 @@ export function splitSseBlocks(source: string): { blocks: string[]; rest: string
   };
 }
 
-export function parseSseBlock(rawBlock: string): ParsedSseMessage | null {
+function parseSseBlock(rawBlock: string): ParsedSseMessage | null {
   const block = String(rawBlock || '').trim();
   if (!block) return null;
 

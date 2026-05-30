@@ -265,7 +265,6 @@ export {
   requestGatewayHealth,
   waitForGatewayHealth,
   gatewayHeaders,
-  normalizeChatProvider,
   readModelConfigSync,
   buildGatewayProviderPayload,
   getProviderRequestConfig,

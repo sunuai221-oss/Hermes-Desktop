@@ -11,7 +11,7 @@ import { useFeedback } from '../contexts/FeedbackContext';
 import { useSessions } from '../features/sessions/SessionsContext';
 import { formatSessionSourceLabel } from '../features/sessions/sessionPresentation';
 import * as api from '../api';
-import { cn, formatRelativeTime, normalizeUnixTimestampSeconds, parsePlatformFromKey } from '../lib/utils';
+import { cn, formatBytes, formatRelativeTime, normalizeUnixTimestampSeconds, parsePlatformFromKey } from '../lib/utils';
 
 interface Props {
   onOpenSessionInChat: (sessionId: string | null) => void;
@@ -308,12 +308,4 @@ function MenuButton({ icon, label, onClick, danger = false }: { icon: React.Reac
       {label}
     </button>
   );
-}
-
-// ── Helpers ─────────────────────────────────────────────────────
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
-  if (bytes >= 1024) return (bytes / 1024).toFixed(0) + ' KB';
-  return bytes + ' B';
 }

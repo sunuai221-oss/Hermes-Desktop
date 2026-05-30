@@ -16,7 +16,7 @@ export type NavItem =
   | 'platforms' | 'docs'
   | 'contextFiles';
 
-export type NavSection = {
+type NavSection = {
   label: string;
   items: NavEntry[];
 };
@@ -40,7 +40,7 @@ const advancedItems: NavEntry[] = [
 // COUCHE 2: COMPOSITION (Workspaces) → "Qui travaille et comment ?"
 // COUCHE 3: ENVIRONNEMENT (Home, Chat, Profiles, System) → "Où et avec quoi ?"
 
-export const navSections: NavSection[] = [
+const navSections: NavSection[] = [
   {
     label: 'Core',
     items: [
@@ -94,7 +94,7 @@ const footerItems: NavEntry[] = [
 
 const allItems = [...navSections.flatMap(s => s.items), ...footerItems, ...advancedItems];
 
-export const navPathMap: Record<NavItem, string> = Object.fromEntries(
+const navPathMap: Record<NavItem, string> = Object.fromEntries(
   allItems.map(item => [item.id, item.path]),
 ) as Record<NavItem, string>;
 

@@ -1,11 +1,11 @@
 import type { ProfileMetadata } from '../../types';
 
-export const WORKSPACE_PROFILE_NAME_ERROR =
+const WORKSPACE_PROFILE_NAME_ERROR =
   'Profile names can only contain letters, numbers, ".", "_" and "-".';
 
 const WORKSPACE_PROFILE_NAME_PATTERN = /^[A-Za-z0-9_.-]+$/;
 
-export type WorkspaceNodeProfileResolutionStatus =
+type WorkspaceNodeProfileResolutionStatus =
   | 'fallback'
   | 'online'
   | 'offline'
@@ -34,7 +34,7 @@ type ResolveWorkspaceNodeProfileOptions = {
   fallbackProfileName?: string | null;
 };
 
-export function normalizeWorkspaceNodeProfileName(value: string | null | undefined) {
+function normalizeWorkspaceNodeProfileName(value: string | null | undefined) {
   const cleaned = String(value ?? '').trim();
   return cleaned || undefined;
 }

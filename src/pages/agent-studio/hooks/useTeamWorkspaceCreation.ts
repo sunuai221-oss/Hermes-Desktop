@@ -44,7 +44,7 @@ function createEdgeId() {
   return `edge_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
 }
 
-export function formatTeamAmbiguityDetails(ambiguousAgents: ResolvedTeamAgentAmbiguity[]) {
+function formatTeamAmbiguityDetails(ambiguousAgents: ResolvedTeamAgentAmbiguity[]) {
   return ambiguousAgents
     .map(entry => {
       const candidates = entry.matches
@@ -62,7 +62,7 @@ export function formatTeamAmbiguityDetails(ambiguousAgents: ResolvedTeamAgentAmb
     .join('; ');
 }
 
-export function buildTeamWorkspaceDraft(resolved: ResolvedTeam): Partial<AgentWorkspace> {
+function buildTeamWorkspaceDraft(resolved: ResolvedTeam): Partial<AgentWorkspace> {
   return {
     name: resolved.name,
     description: resolved.description,

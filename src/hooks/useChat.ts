@@ -25,10 +25,9 @@ import {
 import type { StoredChatDraft } from '../features/chat/chatDraftBridge';
 
 const MAX_IMAGES = 5;
-export { CHAT_COMMANDS };
-export type { ChatCommandDefinition, ChatCommandId } from '../features/chat/chatCommands';
+export type { ChatCommandDefinition } from '../features/chat/chatCommands';
 
-export const referenceTemplates: Array<{
+const referenceTemplates: Array<{
   kind: ContextReferenceAttachment['kind'];
   label: string;
   placeholder: string;

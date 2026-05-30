@@ -9,7 +9,7 @@ export interface DetachedShizukuState {
   y: number;
 }
 
-export const DETACHED_SHIZUKU_EVENT = 'hermes:detached-shizuku:update';
+const DETACHED_SHIZUKU_EVENT = 'hermes:detached-shizuku:update';
 
 const STORAGE_KEY = 'hermes_detached_shizuku';
 const MIN_SIZE = 120;
@@ -48,7 +48,7 @@ function getDefaultState(): DetachedShizukuState {
   };
 }
 
-export function normalizeDetachedShizukuState(value: Partial<DetachedShizukuState>): DetachedShizukuState {
+function normalizeDetachedShizukuState(value: Partial<DetachedShizukuState>): DetachedShizukuState {
   const defaults = getDefaultState();
   const size = clamp(Number(value.size) || defaults.size, MIN_SIZE, MAX_SIZE);
   const viewport = getViewport();
@@ -65,7 +65,7 @@ export function normalizeDetachedShizukuState(value: Partial<DetachedShizukuStat
   };
 }
 
-export function readDetachedShizukuState(): DetachedShizukuState {
+function readDetachedShizukuState(): DetachedShizukuState {
   if (typeof window === 'undefined') return getDefaultState();
 
   try {
@@ -77,7 +77,7 @@ export function readDetachedShizukuState(): DetachedShizukuState {
   }
 }
 
-export function writeDetachedShizukuState(next: DetachedShizukuState) {
+function writeDetachedShizukuState(next: DetachedShizukuState) {
   const normalized = normalizeDetachedShizukuState(next);
   if (typeof window !== 'undefined') {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));

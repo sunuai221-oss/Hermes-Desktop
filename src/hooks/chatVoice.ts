@@ -11,7 +11,7 @@ export type VoiceState = 'idle' | 'recording' | 'processing' | 'speaking';
 
 // ── Pure helpers (former chatVoiceController.ts) ──
 
-export function stopMicrophoneCapture(
+function stopMicrophoneCapture(
   recorderRef: RefObject<MediaRecorder | null>,
   streamRef: RefObject<MediaStream | null>,
 ) {
@@ -23,13 +23,13 @@ export function stopMicrophoneCapture(
   }
 }
 
-export function createVoiceAbortError(): Error {
+function createVoiceAbortError(): Error {
   const error = new Error('Voice playback interrupted');
   error.name = 'AbortError';
   return error;
 }
 
-export function isVoiceAbortError(error: unknown): boolean {
+function isVoiceAbortError(error: unknown): boolean {
   return Boolean(
     error
     && typeof error === 'object'
@@ -64,7 +64,7 @@ interface CreateAudioPlaybackParams {
   setVoiceState: SetState<VoiceState>;
 }
 
-export function createAudioPlayback(params: CreateAudioPlaybackParams) {
+function createAudioPlayback(params: CreateAudioPlaybackParams) {
   const clearAudioUrl = (audioUrl: string) => {
     const normalized = String(audioUrl || '').trim();
     if (!normalized) return;
@@ -183,7 +183,7 @@ interface CreateAudioControllerParams {
   setVoiceState: SetState<VoiceState>;
 }
 
-export function createAudioController(params: CreateAudioControllerParams) {
+function createAudioController(params: CreateAudioControllerParams) {
   const stopCurrentVoicePlayback = () => {
     if (params.voiceSynthesisAbortRef.current) {
       params.voiceSynthesisAbortRef.current.abort();

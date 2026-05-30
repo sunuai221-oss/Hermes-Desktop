@@ -1,7 +1,7 @@
 import type { Message } from '../../types';
 
 // preference: active runtime profile selected by the shell.
-export const ACTIVE_PROFILE_KEY = 'hermes_profile';
+const ACTIVE_PROFILE_KEY = 'hermes_profile';
 
 // preference: chat display toggles.
 export const CHAT_SHOW_THINKING_KEY = 'hermes_chat_show_thinking';

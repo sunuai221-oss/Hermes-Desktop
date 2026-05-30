@@ -197,7 +197,6 @@ function toRateLimitReset(value) {
 }
 
 export {
-  splitSseBlocks,
   parseSseChunk,
   parseSseBlock,
   normalizeGatewayUsage,

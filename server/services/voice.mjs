@@ -557,11 +557,8 @@ export {
   runVoiceTool,
   transcribeAudioFile,
   synthesizeSpeech,
-  synthesizeSpeechWithNeuTtsServer,
   synthesizeSpeechSegments,
   transcodeAudioWithFfmpeg,
   sanitizeTextForSpeech,
-  concatenateWavBuffers,
   extractAssistantText,
-  ensureVoiceDir,
 };
