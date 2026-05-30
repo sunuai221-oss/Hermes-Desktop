@@ -24,7 +24,7 @@ import dns from 'dns/promises';
 import net from 'net';
 import os from 'os';
 import { createHash } from 'crypto';
-import { execFile, execFileSync, spawn } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath, pathToFileURL } from 'url';
 
@@ -37,7 +37,6 @@ import {
 
 // ── Routes ──────────────────────────────────────────────────────────
 import { registerApiAccessRoutes } from './routes/api-access.mjs';
-// ── deprecated: replaced by agent-studio (no frontend consumers) ──
 import { registerAgentStudioRoutes } from './routes/agent-studio.mjs';
 import { registerConfigRoutes } from './routes/config.mjs';
 import { registerContextFileRoutes } from './routes/context-files.mjs';
@@ -64,7 +63,6 @@ import { createDocumentParserService } from './services/document-parser.mjs';
 import { createCronJobsService } from './services/cronjobs.mjs';
 import {
   createProviderCatalogService,
-  normalizeChatProvider,
 } from './services/provider-catalog.mjs';
 import { createPluginsService } from './services/plugins.mjs';
 import { createPawrtalService } from './services/pawrtal.mjs';
@@ -92,8 +90,6 @@ import {
   resolveHermesHome,
   resolveLocalHermesStateHome,
   resolveWorkspaceRoot,
-  getHermesHomeScore,
-  detectWslHermesHome,
   resolveLocalAppStateDir,
   sanitizeProfileName,
 } from './services/profile-resolver.mjs';
@@ -103,33 +99,21 @@ import {
   parseGatewayTarget,
   buildGatewayTarget,
   parseWslUncPath,
-  toWslUncPath,
   quoteBash,
-  toWslPath,
 } from './services/path-resolver.mjs';
 import {
-  readGatewayStateSafe,
   requestGatewayHealth,
   waitForGatewayHealth,
-  gatewayHeaders,
-  readModelConfigSync,
-  buildGatewayProviderPayload,
   getProviderRequestConfig,
-  shouldUseWslGatewayFallback,
   postGatewayChatCompletion,
-  postGatewayChatCompletionViaWsl,
   resolveGatewayProcessStatus,
 } from './services/gateway-proxy.mjs';
 import {
   parseAudioDataUrl,
-  mimeTypeToExtension,
   getVoiceConfig,
-  getPythonCommand,
-  runVoiceTool,
   transcribeAudioFile,
   synthesizeSpeech,
   synthesizeSpeechSegments,
-  transcodeAudioWithFfmpeg,
   sanitizeTextForSpeech,
   extractAssistantText,
 } from './services/voice.mjs';
@@ -534,8 +518,6 @@ registerProfileRoutes({
   stateDbManager,
 });
 
-// ── Route Registration (remaining) ──────────────────────────────────
-
 registerAgentStudioRoutes({
   app,
   agentStudioService,
@@ -547,9 +529,10 @@ registerAgentStudioRoutes({
   startWorkspaceRunSession: startPersistedWorkspaceRunSession,
   finishWorkspaceRunSession: finishPersistedWorkspaceRunSession,
 });
-  registerConfigRoutes({ app, runtimeFilesService });
-  registerContextReferenceRoutes({ app, contextReferenceService });
-  registerSessionRoutes({
+
+registerConfigRoutes({ app, runtimeFilesService });
+registerContextReferenceRoutes({ app, contextReferenceService });
+registerSessionRoutes({
   app,
   fs,
   path,
