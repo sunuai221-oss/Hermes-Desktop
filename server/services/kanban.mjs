@@ -11,7 +11,8 @@ export const VALID_STATUSES = new Set(['triage', 'todo', 'ready', 'running', 'bl
 
 const DEFAULT_BOARD = 'default';
 const BOARD_SLUG_RE = /^[a-z0-9][a-z0-9\-_]{0,63}$/;
-const DEFAULT_CLAIM_TTL_SECONDS = 15 * 60;
+const DEFAULT_LOG_TAIL_CHARS = 12000;
+const MAX_LOG_TAIL_CHARS = 200000;
 const VALID_WORKSPACE_KINDS = new Set(['scratch', 'worktree', 'dir']);
 
 // ---------------------------------------------------------------------------
@@ -54,18 +55,6 @@ function _kanbanDbPath(board) {
     return path.join(_getKanbanHome(), 'kanban.db');
   }
   return path.join(_boardDir(slug), 'kanban.db');
-}
-
-function _getKanbanHomeForHermer(hermes) {
-  // If hermes object provides a home, try to resolve it
-  if (hermes?.home) {
-    // Try to parse as WSL UNC path first
-    const unc = _parseWslUncPath(hermes.home);
-    if (unc?.linuxPath) return unc.linuxPath;
-  }
-  const override = process.env.HERMES_KANBAN_HOME;
-  if (override && override.trim()) return override.trim();
-  return _getKanbanHome();
 }
 
 // ---------------------------------------------------------------------------
@@ -369,14 +358,24 @@ function _asArray(value) {
   return text.split(',').map(_cleanString).filter(Boolean);
 }
 
-function _parseWslUncPath(inputPath) {
-  const value = String(inputPath || '');
-  const match = value.match(/^\\\\wsl(?:\.localhost)?\\([^\\]+)(.*)$/i);
-  if (!match) return null;
-  const distro = match[1];
-  const suffix = match[2] || '';
-  const linuxPath = suffix ? suffix.replace(/\\/g, '/') : '/';
-  return { distro, linuxPath: linuxPath.startsWith('/') ? linuxPath : '/' + linuxPath };
+function _normalizeAssignee(value) {
+  const assignee = _cleanString(value)?.toLowerCase();
+  return assignee && assignee !== 'none' && assignee !== 'unassigned' ? assignee : null;
+}
+
+function _normalizeTailChars(value) {
+  const parsed = Number(String(value ?? '').trim());
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_LOG_TAIL_CHARS;
+  return Math.min(Math.trunc(parsed), MAX_LOG_TAIL_CHARS);
+}
+
+function _formatEventPayload(payload) {
+  if (!payload) return '';
+  try {
+    return ' ' + JSON.stringify(JSON.parse(payload));
+  } catch {
+    return ' ' + String(payload);
+  }
 }
 
 function _rowToTask(row) {
@@ -575,6 +574,7 @@ export async function createTask(hermes, payload = {}) {
 
   const skillsValue = _asArray(payload.skills);
   const parents = _asArray(payload.parents);
+  const assignee = _normalizeAssignee(payload.assignee);
 
   // Validate workspace_kind
   const workspaceKind = _cleanString(payload.workspaceKind) || 'scratch';
@@ -636,7 +636,7 @@ export async function createTask(hermes, payload = {}) {
     taskId,
     title.trim(),
     _cleanString(payload.body),
-    _cleanString(payload.assignee)?.toLowerCase() || null,
+    assignee,
     initialStatus,
     priority,
     _cleanString(payload.createdBy) || 'desktop',
@@ -659,7 +659,7 @@ export async function createTask(hermes, payload = {}) {
 
   // Append event
   _appendEvent(db, taskId, 'created', {
-    assignee: _cleanString(payload.assignee)?.toLowerCase(),
+    assignee,
     status: initialStatus,
     parents: [...parents],
     tenant: _cleanString(payload.tenant),
@@ -728,17 +728,14 @@ export async function taskLog(hermes, board, taskId, tail = 12000) {
   // Format events as log lines
   const lines = [];
   for (const ev of events) {
-    let pl = '';
-    if (ev.payload) {
-      try { pl = ' ' + JSON.parse(ev.payload); } catch { pl = ' ' + ev.payload; }
-    }
+    const pl = _formatEventPayload(ev.payload);
     lines.push(`[${new Date(ev.created_at * 1000).toISOString()}] ${ev.kind}${pl ? ': ' + pl : ''}`);
   }
 
-  // Apply tail
-  const trimmed = lines.slice(-Math.min(lines.length, tail / 80)); // rough char-to-line conversion
+  const tailChars = _normalizeTailChars(tail);
+  const content = lines.join('\n');
 
-  return { taskId, content: trimmed.join('\n') || '' };
+  return { taskId, content: content.length > tailChars ? content.slice(-tailChars) : content };
 }
 
 export async function taskAction(hermes, board, taskId, actionArgs) {
@@ -839,7 +836,6 @@ export async function transitionTaskStatus(hermes, board, taskId, status, payloa
       return;
     }
     // Otherwise just move to ready
-    const now = Math.floor(Date.now() / 1000);
     db.prepare("UPDATE tasks SET status = 'ready' WHERE id = ?").run(taskId);
     _appendEvent(db, taskId, 'promoted', { from: task.status });
     return;
@@ -958,7 +954,7 @@ function _appendEvent(db, taskId, kind, payload = {}, runId = null) {
 
 async function _assignTask(hermes, board, taskId, profile) {
   const db = _getDb(board);
-  profile = String(profile).toLowerCase().trim();
+  profile = _normalizeAssignee(profile);
 
   db.exec('BEGIN IMMEDIATE');
   try {
