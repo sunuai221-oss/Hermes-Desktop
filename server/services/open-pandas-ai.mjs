@@ -157,6 +157,22 @@ function parseDataUrl(dataUrl, fieldLabel = 'dataset.dataUrl') {
   };
 }
 
+function normalizeBase64Payload(value, invalidMessage) {
+  const raw = normalizeOptionalString(value);
+  if (!raw) return null;
+  const compact = raw.replace(/\s+/g, '');
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(compact) || compact.length % 4 === 1) {
+    throw createHttpError(400, invalidMessage);
+  }
+  return compact;
+}
+
+function decodeBase64Buffer(base64, invalidMessage) {
+  const normalized = normalizeBase64Payload(base64, invalidMessage);
+  if (!normalized) return null;
+  return Buffer.from(normalized, 'base64');
+}
+
 function normalizeForPathCompare(value) {
   return String(value || '')
     .replace(/\\/g, '/')
@@ -260,23 +276,18 @@ function normalizeDatasetPayload(payload = {}, maxDatasetBytes = DEFAULT_MAX_DAT
     throw createHttpError(400, `Unsupported dataset extension "${extension || 'none'}". Supported: ${supported}`);
   }
 
-  let base64 = normalizeOptionalString(dataset.base64);
+  let base64 = normalizeBase64Payload(dataset.base64, 'dataset base64 content is invalid');
   let mimeType = normalizeOptionalString(dataset.mimeType);
   if (!base64 && dataset.dataUrl) {
     const parsed = parseDataUrl(dataset.dataUrl, 'dataset.dataUrl');
-    base64 = parsed.base64;
+    base64 = normalizeBase64Payload(parsed.base64, 'dataset base64 content is invalid');
     mimeType = mimeType || parsed.mimeType;
   }
   if (!base64) {
     throw createHttpError(400, 'dataset content is required (dataset.base64 or dataset.dataUrl)');
   }
 
-  let buffer;
-  try {
-    buffer = Buffer.from(base64, 'base64');
-  } catch {
-    throw createHttpError(400, 'dataset base64 content is invalid');
-  }
+  const buffer = decodeBase64Buffer(base64, 'dataset base64 content is invalid');
   if (!buffer.length) throw createHttpError(400, 'dataset is empty');
   if (buffer.length > maxDatasetBytes) {
     throw createHttpError(413, `dataset exceeds ${maxDatasetBytes} bytes`);
@@ -304,23 +315,18 @@ function normalizeDocumentPayload(payload = {}, maxDocumentBytes = DEFAULT_MAX_D
     throw createHttpError(400, `Unsupported document extension "${extension || 'none'}". Supported: ${supported}`);
   }
 
-  let base64 = normalizeOptionalString(document.base64);
+  let base64 = normalizeBase64Payload(document.base64, 'document base64 content is invalid');
   let mimeType = normalizeOptionalString(document.mimeType);
   if (!base64 && document.dataUrl) {
     const parsed = parseDataUrl(document.dataUrl, 'document.dataUrl');
-    base64 = parsed.base64;
+    base64 = normalizeBase64Payload(parsed.base64, 'document base64 content is invalid');
     mimeType = mimeType || parsed.mimeType;
   }
   if (!base64) {
     throw createHttpError(400, 'document content is required (document.base64 or document.dataUrl)');
   }
 
-  let buffer;
-  try {
-    buffer = Buffer.from(base64, 'base64');
-  } catch {
-    throw createHttpError(400, 'document base64 content is invalid');
-  }
+  const buffer = decodeBase64Buffer(base64, 'document base64 content is invalid');
   if (!buffer.length) throw createHttpError(400, 'document is empty');
   if (buffer.length > maxDocumentBytes) {
     throw createHttpError(413, `document exceeds ${maxDocumentBytes} bytes`);

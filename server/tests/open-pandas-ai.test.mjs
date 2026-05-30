@@ -513,6 +513,55 @@ test('open-pandas-ai service rejects unsupported dataset extensions', async () =
   });
 });
 
+test('open-pandas-ai service rejects malformed base64 payloads before queuing runs', async () => {
+  await withTempDir('hermes-opa-base64-', async tempDir => {
+    const hermes = makeHermes(tempDir);
+    const service = createOpenPandasAiService({
+      fs,
+      path,
+      axios: {},
+      execFileAsync: async () => ({ stdout: '', stderr: '' }),
+      runtimeFilesService: {
+        async readYamlConfig() {
+          return {
+            open_pandas_ai: {
+              enabled: true,
+              mode: 'api',
+              api_base_url: 'http://127.0.0.1:9876',
+            },
+          };
+        },
+      },
+    });
+
+    await assert.rejects(
+      () => service.startAnalysis(hermes, {
+        question: 'Analyze',
+        dataset: {
+          fileName: 'sales.csv',
+          base64: 'not valid !!!',
+        },
+      }),
+      error => error?.statusCode === 400 && /dataset base64 content is invalid/.test(error.message),
+    );
+
+    await assert.rejects(
+      () => service.startAnalysis(hermes, {
+        question: 'Analyze',
+        dataset: {
+          fileName: 'sales.csv',
+          base64: Buffer.from('region,sales\nNorth,1200\n', 'utf-8').toString('base64'),
+        },
+        document: {
+          fileName: 'brief.pdf',
+          base64: 'also invalid !!!',
+        },
+      }),
+      error => error?.statusCode === 400 && /document base64 content is invalid/.test(error.message),
+    );
+  });
+});
+
 test('open-pandas-ai service rejects oversized questions', async () => {
   await withTempDir('hermes-opa-question-limit-', async tempDir => {
     const hermes = makeHermes(tempDir);
