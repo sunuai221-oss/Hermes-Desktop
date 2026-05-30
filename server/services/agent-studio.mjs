@@ -9,7 +9,6 @@ const VALID_EDGE_KINDS = new Set(['handoff', 'review', 'qa', 'broadcast', 'escal
 const VALID_MODES = new Set(['prompt', 'delegate', 'profiles']);
 const VALID_PROFILE_NAME_PATTERN = /^[\w.-]+$/;
 const BLOCKING_EXECUTION_EDGE_KINDS = new Set(['handoff', 'review', 'qa']);
-const CONTEXTUAL_EXECUTION_EDGE_KINDS = new Set(['broadcast', 'escalation']);
 const ACTIVE_RUN_STATUSES = new Set(['queued', 'running']);
 const OPEN_PANDAS_DATASET_EXTENSIONS = new Set([
   '.csv',
@@ -118,20 +117,35 @@ function parseDataUrl(value) {
   };
 }
 
+function normalizeBase64Payload(value, label) {
+  const compact = cleanString(value).replace(/\s+/g, '');
+  if (!compact) return '';
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(compact) || compact.length % 4 === 1) {
+    throw createHttpError(400, `${label} contains invalid base64 data`);
+  }
+  return compact;
+}
+
 function decodeAttachmentBytes(rawPayload, label) {
   const payload = rawPayload && typeof rawPayload === 'object' ? rawPayload : null;
   if (!payload) return null;
 
-  let base64 = cleanString(payload.base64);
-  let mimeType = cleanString(payload.mimeType).toLowerCase() || 'application/octet-stream';
+  const rawBase64 = cleanString(payload.base64);
+  let base64 = rawBase64 ? normalizeBase64Payload(rawBase64, label) : '';
+  let mimeType = cleanString(payload.mimeType).toLowerCase();
   if (!base64) {
-    const parsedDataUrl = parseDataUrl(payload.dataUrl);
-    if (parsedDataUrl) {
-      base64 = parsedDataUrl.base64;
+    const rawDataUrl = cleanString(payload.dataUrl);
+    if (rawDataUrl) {
+      const parsedDataUrl = parseDataUrl(rawDataUrl);
+      if (!parsedDataUrl) {
+        throw createHttpError(400, `${label} dataUrl must be a valid base64 data URL`);
+      }
+      base64 = normalizeBase64Payload(parsedDataUrl.base64, label);
       mimeType = mimeType || parsedDataUrl.mimeType;
     }
   }
   if (!base64) return null;
+  mimeType = mimeType || 'application/octet-stream';
 
   let bytes;
   try {
@@ -268,6 +282,15 @@ function normalizeAgent(input, existing = null, defaults = {}) {
   const source = normalizeSource(input?.source, defaults.source || 'user');
   const sourcePath = optionalString(input?.sourcePath ?? defaults.sourcePath);
   const slug = slugify(input?.slug || defaults.slug || name);
+  const description = optionalString(input?.description ?? defaults.description);
+  const division = optionalString(input?.division ?? defaults.division);
+  const color = optionalString(input?.color ?? defaults.color);
+  const emoji = optionalString(input?.emoji ?? defaults.emoji);
+  const vibe = optionalString(input?.vibe ?? defaults.vibe);
+  const workflow = optionalString(input?.workflow ?? defaults.workflow);
+  const deliverables = optionalString(input?.deliverables ?? defaults.deliverables);
+  const successMetrics = optionalString(input?.successMetrics ?? defaults.successMetrics);
+  const defaultModel = optionalString(input?.defaultModel ?? defaults.defaultModel);
 
   return {
     id: cleanString(existing?.id || input?.id) || generatedId('agent'),
@@ -275,18 +298,18 @@ function normalizeAgent(input, existing = null, defaults = {}) {
     ...(sourcePath ? { sourcePath } : {}),
     name,
     slug,
-    ...(optionalString(input?.description ?? defaults.description) ? { description: optionalString(input?.description ?? defaults.description) } : {}),
-    ...(optionalString(input?.division ?? defaults.division) ? { division: optionalString(input?.division ?? defaults.division) } : {}),
-    ...(optionalString(input?.color ?? defaults.color) ? { color: optionalString(input?.color ?? defaults.color) } : {}),
-    ...(optionalString(input?.emoji ?? defaults.emoji) ? { emoji: optionalString(input?.emoji ?? defaults.emoji) } : {}),
-    ...(optionalString(input?.vibe ?? defaults.vibe) ? { vibe: optionalString(input?.vibe ?? defaults.vibe) } : {}),
+    ...(description ? { description } : {}),
+    ...(division ? { division } : {}),
+    ...(color ? { color } : {}),
+    ...(emoji ? { emoji } : {}),
+    ...(vibe ? { vibe } : {}),
     soul,
-    ...(optionalString(input?.workflow ?? defaults.workflow) ? { workflow: optionalString(input?.workflow ?? defaults.workflow) } : {}),
-    ...(optionalString(input?.deliverables ?? defaults.deliverables) ? { deliverables: optionalString(input?.deliverables ?? defaults.deliverables) } : {}),
-    ...(optionalString(input?.successMetrics ?? defaults.successMetrics) ? { successMetrics: optionalString(input?.successMetrics ?? defaults.successMetrics) } : {}),
+    ...(workflow ? { workflow } : {}),
+    ...(deliverables ? { deliverables } : {}),
+    ...(successMetrics ? { successMetrics } : {}),
     preferredSkills: asStringArray(input?.preferredSkills ?? defaults.preferredSkills),
     preferredToolsets: asStringArray(input?.preferredToolsets ?? defaults.preferredToolsets),
-    ...(optionalString(input?.defaultModel ?? defaults.defaultModel) ? { defaultModel: optionalString(input?.defaultModel ?? defaults.defaultModel) } : {}),
+    ...(defaultModel ? { defaultModel } : {}),
     tags: asStringArray(input?.tags ?? defaults.tags),
     createdAt: existing?.createdAt || optionalString(input?.createdAt) || now,
     updatedAt: now,
@@ -296,13 +319,16 @@ function normalizeAgent(input, existing = null, defaults = {}) {
 function normalizeNode(input) {
   const agentId = cleanString(input?.agentId);
   if (!agentId) throw createHttpError(400, 'Workspace node agentId is required');
+  const label = optionalString(input?.label);
+  const profileName = normalizeProfileName(input?.profileName);
+  const modelOverride = optionalString(input?.modelOverride);
   return {
     id: cleanString(input?.id) || generatedId('node'),
     agentId,
     role: VALID_ROLES.has(input?.role) ? input.role : 'worker',
-    ...(optionalString(input?.label) ? { label: optionalString(input.label) } : {}),
-    ...(normalizeProfileName(input?.profileName) ? { profileName: normalizeProfileName(input.profileName) } : {}),
-    ...(optionalString(input?.modelOverride) ? { modelOverride: optionalString(input.modelOverride) } : {}),
+    ...(label ? { label } : {}),
+    ...(profileName ? { profileName } : {}),
+    ...(modelOverride ? { modelOverride } : {}),
     toolsets: asStringArray(input?.toolsets),
     skills: asStringArray(input?.skills),
     position: normalizePosition(input?.position),
@@ -313,12 +339,13 @@ function normalizeEdge(input) {
   const fromNodeId = cleanString(input?.fromNodeId);
   const toNodeId = cleanString(input?.toNodeId);
   if (!fromNodeId || !toNodeId) throw createHttpError(400, 'Workspace edge endpoints are required');
+  const template = optionalString(input?.template);
   return {
     id: cleanString(input?.id) || generatedId('edge'),
     fromNodeId,
     toNodeId,
     kind: VALID_EDGE_KINDS.has(input?.kind) ? input.kind : 'handoff',
-    ...(optionalString(input?.template) ? { template: optionalString(input.template) } : {}),
+    ...(template ? { template } : {}),
   };
 }
 
@@ -335,12 +362,14 @@ function normalizeWorkspace(input, existing = null) {
       && nodeIds.has(edge.toNodeId)
       && edge.fromNodeId !== edge.toNodeId
     );
+  const description = optionalString(input?.description);
+  const pipelineBrief = optionalString(input?.pipelineBrief);
 
   return {
     id: cleanString(existing?.id || input?.id) || generatedId('workspace'),
     name,
-    ...(optionalString(input?.description) ? { description: optionalString(input.description) } : {}),
-    ...(optionalString(input?.pipelineBrief) ? { pipelineBrief: optionalString(input.pipelineBrief) } : {}),
+    ...(description ? { description } : {}),
+    ...(pipelineBrief ? { pipelineBrief } : {}),
     sharedContext: cleanString(input?.sharedContext),
     commonRules: cleanString(input?.commonRules),
     defaultMode: VALID_MODES.has(input?.defaultMode) ? input.defaultMode : 'prompt',

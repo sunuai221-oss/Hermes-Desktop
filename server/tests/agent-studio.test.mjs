@@ -1331,6 +1331,68 @@ test('workspace profile execution runs document_parse then open_pandas_analysis 
   });
 });
 
+test('workspace profile execution rejects malformed toolset attachments', async () => {
+  await withHermesFiles(async hermes => {
+    const analystAgent = await agentStudioService.createAgent(hermes, {
+      name: 'Attachment Guard',
+      soul: '# Attachment Guard Soul',
+    });
+
+    const workspace = await agentStudioService.createWorkspace(hermes, {
+      name: 'Attachment Guard Workspace',
+      defaultMode: 'profiles',
+      nodes: [{
+        id: 'node-analyze',
+        agentId: analystAgent.agent.id,
+        role: 'worker',
+        toolsets: ['open_pandas_analysis'],
+        position: { x: 1, y: 1 },
+      }],
+    });
+
+    const runners = {
+      postGatewayChatCompletion: async () => ({ choices: [{ message: { content: 'should not run' } }] }),
+    };
+
+    await assert.rejects(
+      agentStudioService.runWorkspaceTask(hermes, workspace.workspace.id, {
+        task: 'Analyze this attachment.',
+        mode: 'profiles',
+        attachments: {
+          dataset: {
+            fileName: 'sales.csv',
+            base64: 'not valid !!!',
+            mimeType: 'text/csv',
+          },
+        },
+      }, runners),
+      error => {
+        assert.equal(error.statusCode, 400);
+        assert.match(error.message, /invalid base64/i);
+        return true;
+      },
+    );
+
+    await assert.rejects(
+      agentStudioService.runWorkspaceTask(hermes, workspace.workspace.id, {
+        task: 'Analyze this attachment.',
+        mode: 'profiles',
+        attachments: {
+          dataset: {
+            fileName: 'sales.csv',
+            dataUrl: 'data:text/csv;base64,@@@',
+          },
+        },
+      }, runners),
+      error => {
+        assert.equal(error.statusCode, 400);
+        assert.match(error.message, /valid base64 data URL/i);
+        return true;
+      },
+    );
+  });
+});
+
 test('workspace profile execution fails a node when its configured toolset fails', async () => {
   await withHermesFiles(async hermes => {
     const analystAgent = await agentStudioService.createAgent(hermes, {
