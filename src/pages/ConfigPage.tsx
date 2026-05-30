@@ -8,33 +8,17 @@ import { useGatewayContext } from '../contexts/GatewayContext';
 import { useRuntimeStatus } from '../hooks/useRuntimeStatus';
 import * as api from '../api';
 import { cn, formatUptime } from '../lib/utils';
+import { ActionButton, Field, SectionTitle, Toggle } from './config/ConfigControls';
+import {
+  formatCommandOutput,
+  formatDiagnosticsSummary,
+  formatLogsOutput,
+  type DiagnosticsAction,
+  type DiagnosticsSnapshot,
+} from './config/configDiagnostics';
 import type { HermesConfig } from '../types';
 
 type NestedConfigNode = Record<string, unknown>;
-type DiagnosticsAction = 'health' | 'logs' | 'doctor' | 'dump' | 'backup';
-
-interface DiagnosticsSnapshot {
-  processStatus?: {
-    status?: string;
-    gateway_state?: string;
-    port?: number | null;
-    pid?: number;
-    managed?: boolean;
-    status_source?: string;
-    gateway_url?: string;
-  } | null;
-  health?: { status?: string; [key: string]: unknown } | null;
-  detailedHealth?: unknown;
-  detailedHealthEndpoint?: string | null;
-  logs?: {
-    path?: string | null;
-    updatedAt?: string | null;
-    sizeBytes?: number;
-    truncated?: boolean;
-    content?: string;
-    note?: string;
-  } | null;
-}
 
 export function ConfigPage() {
   const gateway = useGatewayContext();
@@ -727,139 +711,5 @@ export function ConfigPage() {
         </div>
       </Card>
     </motion.div>
-  );
-}
-
-function SectionTitle({ icon, title }: { icon: React.ReactNode; title: string }) {
-  return (
-    <h3 className="mb-5 flex items-center gap-2 text-base font-bold">
-      <span className="text-primary">{icon}</span> {title}
-    </h3>
-  );
-}
-
-function ActionButton({
-  icon,
-  label,
-  loading,
-  onClick,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  loading: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={loading}
-      className="inline-flex items-center gap-1.5 rounded-md border border-border/60 bg-muted/35 px-2.5 py-1.5 text-[11px] text-foreground/85 hover:bg-muted disabled:opacity-45 transition-colors"
-    >
-      {loading ? <RefreshCw size={13} className="animate-spin" /> : icon}
-      {label}
-    </button>
-  );
-}
-
-function formatDiagnosticsSummary(snapshot: DiagnosticsSnapshot | null): string {
-  if (!snapshot) return 'Diagnostics unavailable.';
-  const parts = [
-    `process status: ${snapshot.processStatus?.status || 'unknown'}`,
-    `gateway status: ${String(snapshot.health?.status || 'offline')}`,
-    `gateway state: ${snapshot.processStatus?.gateway_state || 'unknown'}`,
-    `pid: ${snapshot.processStatus?.pid ?? 'n/a'}`,
-    `port: ${snapshot.processStatus?.port ?? 'n/a'}`,
-    `source: ${snapshot.processStatus?.status_source || 'unknown'}`,
-  ];
-
-  if (snapshot.detailedHealthEndpoint) {
-    parts.push(`detailed endpoint: ${snapshot.detailedHealthEndpoint}`);
-  }
-  if (snapshot.logs?.path) {
-    parts.push(`log file: ${snapshot.logs.path}`);
-  }
-  if (snapshot.logs?.note) {
-    parts.push(snapshot.logs.note);
-  }
-
-  return parts.join('\n');
-}
-
-function formatLogsOutput(logs: DiagnosticsSnapshot['logs'] | null | undefined): string {
-  if (!logs) return 'No logs returned.';
-  const header = [
-    `path: ${logs.path || 'n/a'}`,
-    `updated: ${logs.updatedAt || 'n/a'}`,
-    `size: ${typeof logs.sizeBytes === 'number' ? `${logs.sizeBytes} bytes` : 'n/a'}`,
-    logs.truncated ? 'truncated: true' : 'truncated: false',
-  ].join('\n');
-  const body = String(logs.content || logs.note || '').trim();
-  return body ? `${header}\n\n${body}` : header;
-}
-
-function formatCommandOutput(payload: Record<string, unknown>): string {
-  const command = String(payload.command || 'hermes command');
-  const distro = String(payload.distro || 'unknown');
-  const status = payload.ok === false ? 'failed' : 'ok';
-  const code = payload.code == null ? '' : `\ncode: ${String(payload.code)}`;
-  const stdout = String(payload.stdout || '').trim();
-  const stderr = String(payload.stderr || '').trim();
-  const chunks = [
-    `command: ${command}`,
-    `distro: ${distro}`,
-    `status: ${status}${code}`,
-  ];
-  if (stdout) chunks.push(`stdout:\n${stdout}`);
-  if (stderr) chunks.push(`stderr:\n${stderr}`);
-  return chunks.join('\n\n');
-}
-
-function Field({ label, value, onChange, type = 'text', placeholder }: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  type?: string;
-  placeholder?: string;
-}) {
-  return (
-    <div className="mb-4">
-      <label className="mb-1.5 block text-xs text-muted-foreground">{label}</label>
-      <input
-        type={type}
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        title={label}
-        placeholder={placeholder || label}
-        className="w-full rounded-lg border border-border bg-muted px-4 py-2.5 font-mono text-sm transition-all focus:outline-none focus:ring-2 focus:ring-primary/40"
-      />
-    </div>
-  );
-}
-
-function Toggle({ label, checked, onChange }: {
-  label: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <div className="flex items-center justify-between py-2">
-      <span className="text-sm font-medium">{label}</span>
-      <button
-        onClick={() => onChange(!checked)}
-        title={label}
-        aria-label={label}
-        className={cn(
-          'relative h-5 w-10 rounded-full transition-all',
-          checked ? 'bg-primary' : 'bg-muted',
-        )}
-      >
-        <div
-          className={cn(
-            'absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform',
-            checked ? 'translate-x-5' : 'translate-x-0.5',
-          )}
-        />
-      </button>
-    </div>
   );
 }
